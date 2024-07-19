@@ -13,6 +13,11 @@ plotly>=5.15.0
 xarray>=0.20.1
 zarr>=2.10.0
 dask>=2022.0.0
+geopandas>=1.0.0
+anemoi-datasets>=0.4.0
+rasterio>=1.2.0
+affine>=2.3.0
+gcsfs>=2022.0.0
 # for dev
 codespell>=2.0.0
 black>=21.9b0

@@ -8,7 +8,6 @@ import zipfile
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import geopandas as gpd
-import graphcast.solar_radiation as gc_sr
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -16,8 +15,15 @@ import requests
 import xarray as xr
 from affine import Affine
 from anemoi.datasets.grids import cutout_mask
+from pyproj import datadir
 from rasterio.features import rasterize
 from scipy.ndimage import binary_dilation, center_of_mass
+
+proj_lib = os.environ.get("PROJ_LIB")
+if proj_lib:
+    datadir.set_data_dir(proj_lib)
+else:
+    print("PROJ_LIB environment variable is not set")
 
 
 def calculate_datetime_forcing(ds, args):
@@ -180,21 +186,20 @@ def create_boundary_mask(
     return interior_mask, boundary_mask
 
 
-
 def create_boundary_mask_alt(
     lonlat_state,
     lonlat_boundary,
     crs_state,
     boundary_min_distance,
     boundary_max_distance,
-    overlap=False
+    overlap=False,
 ):
     """
     Returns a mask such that lonlat_boundary[msk] gives the boundary points
-    satisfying the requirements to be within a distance of 
+    satisfying the requirements to be within a distance of
     boundary_max_distance from the state area while also not being closer to
     it than boundary_min_distance.
-    If overap = True then also the points within the state area are included. 
+    If overap = True then also the points within the state area are included.
     In this case boundary_min_distance is set to zero.
 
     Args:
@@ -206,14 +211,12 @@ def create_boundary_mask_alt(
         overlap: Boolean
 
     Returns:
-        msk_interior: A boolean (integer) xarray of shape (y, x) indicating 
+        msk_interior: A boolean (integer) xarray of shape (y, x) indicating
         the boundary points within the interior.
         msk_boundary: A boolean (integer) xarray of shape (y, x) indicating
         the queried boundary points.
     """
 
-    import cartopy.crs as ccrs, numpy as np
-    
     def distance_points_to_line(points, line_start, line_end):
         """
         Calculates distances from points in an array to a line in 2D.
@@ -243,34 +246,58 @@ def create_boundary_mask_alt(
         projections = line_start + t[:, np.newaxis] * line_direction
 
         # Distances between points and their projections
-        distances = np.sqrt(np.sum((points - projections)**2, axis=1))
+        distances = np.sqrt(np.sum((points - projections) ** 2, axis=1))
 
         return distances
 
-
     by, bx = lonlat_boundary[0].shape
     lon_state, lat_state = lonlat_state[0].ravel(), lonlat_state[1].ravel()
-    lon_boundary, lat_boundary = lonlat_boundary[0].ravel(), lonlat_boundary[1].ravel()
+    lon_boundary, lat_boundary = (
+        lonlat_boundary[0].ravel(),
+        lonlat_boundary[1].ravel(),
+    )
 
     # regular state grid coordinates
-    crs_boundary = ccrs.Geodetic() 
-    coords_state = crs_state.transform_points(crs_boundary, lon_state, lat_state)
+    crs_boundary = ccrs.Geodetic()
+    coords_state = crs_state.transform_points(
+        crs_boundary, lon_state, lat_state
+    )
 
     # state corner points
-    xm_state, xM_state = np.amin(coords_state[:,0]), np.amax(coords_state[:,0])
-    ym_state, yM_state = np.amin(coords_state[:,1]), np.amax(coords_state[:,1])
+    xm_state, xM_state = np.amin(coords_state[:, 0]), np.amax(
+        coords_state[:, 0]
+    )
+    ym_state, yM_state = np.amin(coords_state[:, 1]), np.amax(
+        coords_state[:, 1]
+    )
     x_ll_state, y_ll_state = xm_state, ym_state
     x_ur_state, y_ur_state = xM_state, yM_state
     # ll ul ur lr
-    pts_corners = np.array([[x_ll_state,y_ll_state], [x_ll_state,y_ur_state], [x_ur_state,y_ur_state], [x_ur_state,y_ll_state]])
+    pts_corners = np.array(
+        [
+            [x_ll_state, y_ll_state],
+            [x_ll_state, y_ur_state],
+            [x_ur_state, y_ur_state],
+            [x_ur_state, y_ll_state],
+        ]
+    )
 
     # boundary points in state area projection
-    coords_boundary = crs_state.transform_points(crs_boundary, lon_boundary, lat_boundary)
+    coords_boundary = crs_state.transform_points(
+        crs_boundary, lon_boundary, lat_boundary
+    )
     # find boundary points outside the state area
-    msk_outside = ~((coords_boundary[:,0] > xm_state) & (coords_boundary[:,0] < xM_state) & (coords_boundary[:,1] > ym_state) & (coords_boundary[:,1] < yM_state))
+    msk_outside = ~(
+        (coords_boundary[:, 0] > xm_state)
+        & (coords_boundary[:, 0] < xM_state)
+        & (coords_boundary[:, 1] > ym_state)
+        & (coords_boundary[:, 1] < yM_state)
+    )
 
     # boundary points outside
-    pts_outside = np.vstack((coords_boundary[msk_outside,0], coords_boundary[msk_outside,1])).T
+    pts_outside = np.vstack(
+        (coords_boundary[msk_outside, 0], coords_boundary[msk_outside, 1])
+    ).T
 
     # distances from points outside to left, top, right and bottom borders
     d_l = distance_points_to_line(pts_outside, pts_corners[0], pts_corners[1])
@@ -282,74 +309,46 @@ def create_boundary_mask_alt(
         boundary_min_distance = 0
 
     min_d, max_d = boundary_min_distance, boundary_max_distance
-    msk_min = (d_l > min_d) & (d_t > min_d) & (d_r > min_d) & (d_b > min_d) 
+    msk_min = (d_l > min_d) & (d_t > min_d) & (d_r > min_d) & (d_b > min_d)
     msk_max = (d_l < max_d) | (d_t < max_d) | (d_r < max_d) | (d_b < max_d)
 
     msk_border = msk_min & msk_max
 
     # construct mask to apply to input boundary data
-    msk_boundary = np.zeros(lon_boundary.shape, dtype='bool')
+    msk_boundary = np.zeros(lon_boundary.shape, dtype="bool")
     msk_boundary[np.where(msk_outside)[0][msk_border]] = True
 
-    msk_interior = np.zeros(lon_boundary.shape, dtype='bool')
+    msk_interior = np.zeros(lon_boundary.shape, dtype="bool")
     if overlap:
         # add boundary points inside
-        msk_interior = ((coords_boundary[:,0] >= xm_state) & (coords_boundary[:,0] <= xM_state) & (coords_boundary[:,1] >= ym_state) & (coords_boundary[:,1] <= yM_state))
+        msk_interior = (
+            (coords_boundary[:, 0] >= xm_state)
+            & (coords_boundary[:, 0] <= xM_state)
+            & (coords_boundary[:, 1] >= ym_state)
+            & (coords_boundary[:, 1] <= yM_state)
+        )
         msk_boundary[msk_interior] = True
 
     msk_interior = xr.DataArray(
-        msk_interior.reshape((by,bx)).astype(int),
+        msk_interior.reshape((by, bx)).astype(int),
         dims=("y", "x"),
         coords={
-            "lat": (("y", "x"), lat_boundary.reshape((by,bx))),
-            "lon": (("y", "x"), lon_boundary.reshape((by,bx))),
+            "lat": (("y", "x"), lat_boundary.reshape((by, bx))),
+            "lon": (("y", "x"), lon_boundary.reshape((by, bx))),
         },
     )
     msk_boundary = xr.DataArray(
-        msk_boundary.reshape((by,bx)).astype(int),
+        msk_boundary.reshape((by, bx)).astype(int),
         dims=("y", "x"),
         coords={
-            "lat": (("y", "x"), lat_boundary.reshape((by,bx))),
-            "lon": (("y", "x"), lon_boundary.reshape((by,bx))),
+            "lat": (("y", "x"), lat_boundary.reshape((by, bx))),
+            "lon": (("y", "x"), lon_boundary.reshape((by, bx))),
         },
     )
     return msk_interior, msk_boundary
 
 
 def generate_toa_radiation_forcing(ds, lonlat):
-    """
-    Pre-compute all static features related to the grid nodes
-    """
-
-    # This simplification is only for demonstration purposes
-    # Rectangular assumption doesn't hold near pole
-    lon, lat = lonlat[0][0, :], lonlat[1][:, 0]
-
-    timestamps = ds.time.values.astype("datetime64[s]")
-
-    toa_array = gc_sr.get_toa_incident_solar_radiation(
-        timestamps,
-        lat,
-        lon,
-    )  # (num_time, num_lat, num_lon)
-    toa_min = toa_array.min()
-    toa_max = toa_array.max()
-    toa_array = (toa_array - toa_min) / (toa_max - toa_min)
-    toa_radiation = toa_array.transpose(0, 2, 1)
-
-    toa_radiation = xr.DataArray(
-        toa_radiation,
-        dims=("time", "x", "y"),
-        coords={
-            "time": ds.time,
-            "lat": (("y", "x"), lonlat[1]),
-            "lon": (("y", "x"), lonlat[0]),
-        },
-    )
-    return toa_radiation
-
-
-def generate_toa_radiation_forcing_approximation(ds, lonlat):
     """
     Calculates approximate TOA irradiance (instantaneous values [W*m**-2])
     """
@@ -363,12 +362,14 @@ def generate_toa_radiation_forcing_approximation(ds, lonlat):
     day = dt.dayofyear.values[:, np.newaxis, np.newaxis]
     hr_utc = dt.hour.values[:, np.newaxis, np.newaxis]
     # Eq. 1.6.1a in Solar Engineering of Thermal Processes 4th ed.
-    dec = np.pi/180 * 23.45 * np.sin(2*np.pi * (284+day) / 365) 
+    dec = np.pi / 180 * 23.45 * np.sin(2 * np.pi * (284 + day) / 365)
     hr_lst = hr_utc + lon_m / 15
     hr_angle = 15 * (hr_lst - 12)
     # Eq. 1.6.2 with beta=0 in Solar Engineering of Thermal Processes 4th ed.
-    cos_sza = np.sin(lat_m * np.pi / 180) * np.sin(dec) + np.cos(lat_m * np.pi / 180) * np.cos(dec) * np.cos(hr_angle * np.pi / 180)
-    toa_radiation = np.fmax(0, E0 * cos_sza) 
+    cos_sza = np.sin(lat_m * np.pi / 180) * np.sin(dec) + np.cos(
+        lat_m * np.pi / 180
+    ) * np.cos(dec) * np.cos(hr_angle * np.pi / 180)
+    toa_radiation = np.fmax(0, E0 * cos_sza)
     toa_radiation = toa_radiation.transpose(0, 2, 1)
 
     toa_radiation = xr.DataArray(
@@ -381,7 +382,6 @@ def generate_toa_radiation_forcing_approximation(ds, lonlat):
         },
     )
     return toa_radiation
-
 
 
 def main():
@@ -410,7 +410,10 @@ def main():
         "proj": "lcc",
     }
 
-    globe = ccrs.Globe(semimajor_axis=lambert_proj_params["a"], semiminor_axis=lambert_proj_params["b"])
+    globe = ccrs.Globe(
+        semimajor_axis=lambert_proj_params["a"],
+        semiminor_axis=lambert_proj_params["b"],
+    )
     lambert_proj = ccrs.LambertConformal(
         central_longitude=lambert_proj_params["lon_0"],
         central_latitude=lambert_proj_params["lat_0"],
@@ -421,12 +424,15 @@ def main():
         globe=globe,
     )
 
-
     # Make sure the example data is available
     xy_state = np.load("data/meps_example/static/nwp_xy.npy")
-    latlong_proj = ccrs.Geodetic() 
-    lonlatz_state = latlong_proj.transform_points(lambert_proj, xy_state[0], xy_state[1])
-    lonlat_state = np.stack((lonlatz_state[:,:,0], lonlatz_state[:,:,1]), axis=0)
+    latlong_proj = ccrs.Geodetic()
+    lonlatz_state = latlong_proj.transform_points(
+        lambert_proj, xy_state[0], xy_state[1]
+    )
+    lonlat_state = np.stack(
+        (lonlatz_state[:, :, 0], lonlatz_state[:, :, 1]), axis=0
+    )
 
     ds_meps = np.load(
         "data/meps_example/samples/train/nwp_2022040100_mbr000.npy"
@@ -482,18 +488,20 @@ def main():
     )
     toa_radtiation_boundary.to_zarr(f"boundary_{args.zarr_path}", mode="w")
     print(
-        f"TOA radiation saved to {args.zarr_path} and boundary_{args.zarr_path}"
+        f"TOA radiation saved to {args.zarr_path} "
+        f"and boundary_{args.zarr_path}"
     )
 
     # alternative boundary masks
     interior_mask, boundary_mask = create_boundary_mask_alt(
-        lonlat_state, lonlat_boundary, lambert_proj, args.boundary_min_distance, args.boundary_max_distance, args.overlap
+        lonlat_state,
+        lonlat_boundary,
+        lambert_proj,
+        args.boundary_min_distance,
+        args.boundary_max_distance,
+        args.overlap,
     )
 
-    # alternative TOA
-    toa_radtiation_boundary = generate_toa_radiation_forcing_approximation(ds_boundary, lonlat_boundary)
-
-    
     if args.plot:
 
         _, ax = plt.subplots(2, 2, figsize=(10, 8))
