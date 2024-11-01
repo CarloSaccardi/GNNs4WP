@@ -41,7 +41,7 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="graph_lam",
+        default="graph_efm",
         help="Model architecture to train/evaluate (default: graph_lam)",
     )
     parser.add_argument(
@@ -92,7 +92,7 @@ def main():
     parser.add_argument(
         "--graph",
         type=str,
-        default="multiscale",
+        default="hierarchical",
         help="Graph to load and use in graph-based model "
         "(default: multiscale)",
     )
