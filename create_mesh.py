@@ -5,6 +5,7 @@ from argparse import ArgumentParser
 # Third-party
 import matplotlib
 import matplotlib.pyplot as plt
+import xarray as xr
 import networkx
 import numpy as np
 import scipy.spatial
@@ -155,20 +156,20 @@ def main():
     parser.add_argument(
         "--dataset",
         type=str,
-        default="meps_example",
+        default="CERRA",
         help="Dataset to load grid point coordinates from "
         "(default: meps_example)",
     )
     parser.add_argument(
         "--graph",
         type=str,
-        default="multiscale",
+        default="hierarchicalCERRA",
         help="Name to save graph as (default: multiscale)",
     )
     parser.add_argument(
         "--plot",
         type=int,
-        default=0,
+        default=1,
         help="If graphs should be plotted during generation "
         "(default: 0 (false))",
     )
@@ -181,7 +182,7 @@ def main():
     parser.add_argument(
         "--hierarchical",
         type=int,
-        default=0,
+        default=1,
         help="Generate hierarchical mesh graph (default: 0, no)",
     )
     args = parser.parse_args()
@@ -220,6 +221,7 @@ def main():
         if args.plot:
             plot_graph(from_networkx(g), title=f"Mesh graph, level {lev}")
             plt.show()
+            plt.savefig(f"mesh_level_{lev}.png")
 
         G.append(g)
 
@@ -301,11 +303,13 @@ def main():
                     pyg_down, title=f"Down graph, {from_level} -> {to_level}"
                 )
                 plt.show()
+                plt.savefig(f"down_level_{from_level}_to_{to_level}.png")
 
                 plot_graph(
                     pyg_down, title=f"Up graph, {to_level} -> {from_level}"
                 )
                 plt.show()
+                plt.savefig(f"up_level_{to_level}_to_{from_level}.png")
 
         # Save up and down edges
         save_edges_list(up_graphs, "mesh_up", graph_dir_path)
@@ -365,6 +369,7 @@ def main():
         if args.plot:
             plot_graph(pyg_m2m, title="Mesh-to-mesh")
             plt.show()
+            plt.savefig("mesh_to_mesh.png")
 
     # Save m2m edges
     save_edges_list(m2m_graphs, "m2m", graph_dir_path)
@@ -444,8 +449,11 @@ def main():
     pyg_g2m = from_networkx(G_g2m)
 
     if args.plot:
+        #save figure
         plot_graph(pyg_g2m, title="Grid-to-mesh")
         plt.show()
+        plt.savefig("grid_to_mesh.png")
+        
 
     #
     # Mesh2Grid
@@ -485,6 +493,7 @@ def main():
     if args.plot:
         plot_graph(pyg_m2g, title="Mesh-to-grid")
         plt.show()
+        plt.savefig("mesh_to_grid.png")
 
     # Save g2m and m2g everything
     # g2m

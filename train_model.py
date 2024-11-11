@@ -363,6 +363,7 @@ def main():
         deterministic=True,
         strategy=strategy,
         accelerator=device_name,
+        devices=1,
         logger=logger,
         log_every_n_steps=1,
         callbacks=callbacks,

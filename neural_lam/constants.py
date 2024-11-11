@@ -115,6 +115,16 @@ LAMBERT_PROJ_PARAMS = {
     "proj": "lcc",
 }
 
+LAMBERT_PROJ_PARAMS_CERRA = {
+    'a': 6371229,           # Updated Earth radius in meters
+    'b': 6371229,           # Updated Earth radius in meters
+    'lat_0': 50,            # Updated latitude of origin
+    'lat_1': 50,            # Updated standard parallel 1
+    'lat_2': 50,            # Updated standard parallel 2
+    'lon_0': 8,             # Updated central meridian
+    'proj': 'lcc'           # Projection type
+}
+
 GRID_LIMITS = [  # In projection
     -1059506.5523409774,  # min x
     1310493.4476590226,  # max x

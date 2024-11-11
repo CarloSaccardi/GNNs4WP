@@ -11,6 +11,11 @@ from tueplots import bundles, figsizes
 # First-party
 from neural_lam import constants
 from neural_lam.interaction_net import InteractionNet
+import matplotlib.pyplot as plt
+import easydict
+from pyproj import Transformer
+from neural_lam import constants
+import xarray as xr
 
 
 def load_dataset_stats(dataset_name, device="cpu"):
@@ -306,3 +311,32 @@ def make_gnn_seq(edge_index, num_gnn_layers, hidden_layers, hidden_dim):
             for _ in range(num_gnn_layers)
         ],
     )
+
+
+def LatLon_to_LambertProj(path, save_dir, plot=False):
+
+
+    ds = xr.open_dataset(path, engine='cfgrib')
+
+    lon = ds['longitude'].values
+    lat = ds['latitude'].values
+    lon[lon > 180] = lon[lon > 180] - 360
+
+    pp = easydict.EasyDict(constants.LAMBERT_PROJ_PARAMS_CERRA)
+    mycrs = f"+proj=lcc +lat_0={pp.lat_0} +lon_0={pp.lon_0} +lat_1={pp.lat_1} +lat_2={pp.lat_2} +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+
+    crstrans = Transformer.from_crs("EPSG:4326", mycrs, always_xy=True)
+    x, y = crstrans.transform(lon, lat)
+
+    xy = np.array([x, y]) # shape = (2, n_lon, n_lat)
+    
+    if plot:
+        plt.figure(figsize=(10, 8))
+        plt.scatter(x, y, s=1, color='blue', alpha=0.5)
+        plt.xlabel("X Coordinates")
+        plt.ylabel("Y Coordinates")
+        plt.grid(True)
+        plt.show()
+        plt.savefig('grid_representationWRONG.png')
+        
+    np.save(save_dir, xy)

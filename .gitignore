@@ -76,3 +76,5 @@ tags
 *.json
 *.lock
 *.pdm-python
+.cdsapirc
+figures/*
