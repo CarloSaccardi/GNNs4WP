@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 # First-party
 from neural_lam import constants
-from neural_lam.weather_dataset import WeatherDataset
+from neural_lam.weather_dataset import WeatherDataset, WeatherDatasetCERRA
 
 
 def main():
@@ -20,7 +20,7 @@ def main():
     parser.add_argument(
         "--dataset",
         type=str,
-        default="meps_example",
+        default="CERRA",
         help="Dataset to compute weights for (default: meps_example)",
     )
     parser.add_argument(
@@ -56,7 +56,7 @@ def main():
         "500": 0.03,
     }
     w_list = np.array(
-        [w_dict[par.split("_")[-2]] for par in constants.PARAM_NAMES]
+        [w_dict[par.split("_")[-2]] for par in constants.PARAM_NAMES_CERRA]
     )
     print("Saving parameter weights...")
     np.save(
@@ -65,7 +65,7 @@ def main():
     )
 
     # Load dataset without any subsampling
-    ds = WeatherDataset(
+    ds = WeatherDatasetCERRA(
         args.dataset,
         split="train",
         subsample_step=1,
@@ -112,7 +112,7 @@ def main():
 
     # Compute mean and std.-dev. of one-step differences across the dataset
     print("Computing mean and std.-dev. for one-step differences...")
-    ds_standard = WeatherDataset(
+    ds_standard = WeatherDatasetCERRA(
         args.dataset,
         split="train",
         subsample_step=1,

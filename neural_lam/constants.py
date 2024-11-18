@@ -62,6 +62,22 @@ PARAM_NAMES = [
     "z_isobaricInhPa_500_instant",
 ]
 
+PARAM_NAMES_CERRA = [
+    "pres_heightAboveGround_0_instant",
+    "pres_heightAboveSea_0_instant",
+    "nlwrs_heightAboveGround_0_accum",
+    "nswrs_heightAboveGround_0_accum",
+    "nswrs_heightAboveGround_0_accum"
+]
+
+PARAM_NAMES_SHORT_CERRA = [
+    "pres_0g",
+    "pres_0s",
+    "nlwrs_0",
+    "nswrs_0",
+    "nswrs_0"
+]
+
 PARAM_NAMES_SHORT = [
     "pres_0g",
     "pres_0s",
@@ -80,6 +96,14 @@ PARAM_NAMES_SHORT = [
     "wvint_0",
     "z_1000",
     "z_500",
+]
+
+PARAM_UNITS_CERRA = [
+    "Pa",
+    "Pa",
+    "W/m²",
+    "W/m²",
+    "W/m²", 
 ]
 PARAM_UNITS = [
     "Pa",
@@ -104,6 +128,7 @@ PARAM_UNITS = [
 # Projection and grid
 # Hard coded for now, but should eventually be part of dataset desc. files
 GRID_SHAPE = (268, 238)  # (y, x)
+GRID_SHAPE_CERRA = (300, 300)  # (y, x)
 
 LAMBERT_PROJ_PARAMS = {
     "a": 6367470,
@@ -144,4 +169,7 @@ LAMBERT_PROJ = cartopy.crs.LambertConformal(
 
 # Data dimensions
 GRID_FORCING_DIM = 5 * 3 + 1  # 5 feat. for 3 time-step window + 1 batch-static
+GRID_FORCING_DIM_CERRA = 12
+
 GRID_STATE_DIM = 17
+GRID_STATE_DIM_CERRA = 5

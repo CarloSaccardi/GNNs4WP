@@ -15,7 +15,7 @@ def main():
     parser.add_argument(
         "--dataset",
         type=str,
-        default="meps_example",
+        default="CERRA",
         help="Dataset to compute weights for (default: meps_example)",
     )
     args = parser.parse_args()
@@ -52,7 +52,7 @@ def main():
         (grid_xy, geopotential, grid_border_mask), dim=1
     )  # (N_grid, 4)
 
-    torch.save(grid_features, os.path.join(static_dir_path, "grid_features.pt"))
+    torch.save(grid_features.to(torch.float32), os.path.join(static_dir_path, "grid_features.pt"))
 
 
 if __name__ == "__main__":

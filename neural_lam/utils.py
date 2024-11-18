@@ -16,6 +16,7 @@ import easydict
 from pyproj import Transformer
 from neural_lam import constants
 import xarray as xr
+import cfgrib
 
 
 def load_dataset_stats(dataset_name, device="cpu"):
@@ -314,8 +315,11 @@ def make_gnn_seq(edge_index, num_gnn_layers, hidden_layers, hidden_dim):
 
 
 def LatLon_to_LambertProj(path, save_dir, plot=False):
-
-
+    
+    """
+    Convert latitude and longitude coordinates to Lambert Conformal projection coordinates.
+    """
+    
     ds = xr.open_dataset(path, engine='cfgrib')
 
     lon = ds['longitude'].values
@@ -340,3 +344,45 @@ def LatLon_to_LambertProj(path, save_dir, plot=False):
         plt.savefig('grid_representationWRONG.png')
         
     np.save(save_dir, xy)
+    
+    
+def get_topography(path, save_dir):
+    """
+    Extract the surface geopotential from a GRIB file and
+    """
+    
+    surface_data = cfgrib.open_datasets(path)
+    surface_geopotential = surface_data[-1]["orog"].values
+    np.save(save_dir, surface_geopotential)
+    
+    
+def create_border_mask(shape=(1069, 1069), border_width=10, filename='border_mask.npy'):
+    """
+    Create a mask with True values along the border and False elsewhere.
+    
+    Parameters:
+    - shape (tuple): The shape of the mask array, default is (1069, 1069).
+    - border_width (int): The width of the border (in grid nodes) to set as True.
+    - filename (str): The filename to save the mask as, default is 'border_mask.npy'.
+    
+    Returns:
+    - None: Saves the mask array to a .npy file.
+    """
+    # Initialize the mask array with False
+    border_mask = np.zeros(shape, dtype=bool)
+
+    # Set the border to True
+    border_mask[:border_width, :] = True         # Top border
+    border_mask[-border_width:, :] = True        # Bottom border
+    border_mask[:, :border_width] = True         # Left border
+    border_mask[:, -border_width:] = True        # Right border
+
+    # Save the mask to a .npy file
+    np.save(filename, border_mask)
+    print(f"Border mask saved to {filename}")
+    
+    
+    
+if __name__ == "__main__":
+    create_border_mask(shape=(300, 300), border_width=10, filename='data/CERRA/static/border_mask.npy')
+    

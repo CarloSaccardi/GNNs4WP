@@ -163,7 +163,7 @@ def main():
     parser.add_argument(
         "--graph",
         type=str,
-        default="hierarchicalCERRA",
+        default="hierarchical",
         help="Name to save graph as (default: multiscale)",
     )
     parser.add_argument(
