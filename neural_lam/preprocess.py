@@ -1,108 +1,51 @@
-import xarray as xr
 import os
 import numpy as np
-import matplotlib.pyplot as plt
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
+import xarray as xr
+from glob import glob
+from datetime import datetime
 
+# Specify the path to the CERRA dataset's 2020 folder
+data_folder = '/aspire/CarloData/CERRA/2019'
 
-# Open the GRIB file
-ds = xr.open_dataset('data/CERRA/rawdata/CERRA_2019_01_01-00_PRES.grb', engine='cfgrib')
-#plot pressure
-temp = ds['t'].values
-y_coords = ds['longitude'].values
-x_coords = ds['latitude'].values
-y_coords[y_coords > 180] = y_coords[y_coords > 180] - 360
+# Create a list of all _PRES.grb files in the 2020 folder
+file_pattern = os.path.join(data_folder, '*_PRES.grb')
+files = sorted(glob(file_pattern))
 
-###########################################################################################################
-temp_slice = temp[0, :, :]  # This gives a (1069, 1069) 2D array
+# Output folder for saving .npy files
+output_folder = '/aspire/CarloData/samples'
+os.makedirs(output_folder, exist_ok=True)
 
-# Plot the selected time slice
-plt.figure(figsize=(10, 8))
-plt.imshow(temp_slice, origin='lower', cmap='coolwarm')
-plt.colorbar(label='Temperature')
-plt.title('Temperature at First Time Slice')
-plt.xlabel('Longitude')
-plt.ylabel('Latitude')
-plt.show()
-plt.savefig('temperature_first_time_slice.png')
-###########################################################################################################
+xy_coord = np.load('data/CERRA/static/nwp_xy.npy')
+surface_geopotential = np.load('data/CERRA/static/surface_geopotential.npy')
+boundary = np.load("data/CERRA/static/border_mask.npy")
+boundary = boundary.astype(int)
 
-# Plotting the x-y coordinate grid
-plt.figure(figsize=(10, 8))
-plt.scatter(y_coords, x_coords, s=1, color='blue', alpha=0.5)
-plt.xlabel("X Coordinates")
-plt.ylabel("Y Coordinates")
-plt.grid(True)
+# Loop through each file
+for file_path in files:
+    # Extract the date and time from the filename
+    base_name = os.path.basename(file_path)
+    datetime_str = base_name.split('_')  # CERRA_YYYYMMDDTT_PRES.grb
+    dd_tt = datetime_str[-2].split("-")  # Split DD and TT
+    datetime_str = datetime_str[1] + datetime_str[2] + dd_tt[0] + dd_tt[1]  # Reorder to YYYYMMDDHH
+    date_time = datetime.strptime(datetime_str, "%Y%m%d%H")
+    output_filename = f'nwp_{datetime_str}_mbr000.npy'
+    output_path = os.path.join(output_folder, output_filename)
 
-# Display the plot
-plt.show()
-plt.savefig('grid_representationWRONG.png')
+    # Load the dataset
+    ds = xr.open_dataset(file_path, engine='cfgrib')
+    
+    # Check if required variables are present
+    if all(var in ds for var in ["u", "v", "z", "t", "r"]):
+        # Stack the main variables along the new axis
+        main_vars = np.stack([ds[var].values for var in ["u", "v", "z", "t", "r"]], axis=-1)
+        
+        
+        # Stack the time encoding arrays along the last axis
+        time_encoded_vars = np.concatenate([main_vars], axis=-1)[0]
 
-
-"""
-extent = [lons.min(), lons.max(), lats.min(), lats.max()]
-
-# Set up a plot with a geographic projection (e.g., PlateCarree for latitude/longitude data)
-fig, ax = plt.subplots(figsize=(10, 8), subplot_kw={'projection': ccrs.PlateCarree()})
-
-# Plot the temperature data using imshow, with the defined extent to match the lat/lon bounds
-# Setting origin='upper' if latitude values go from max to min
-temp_plot = ax.imshow(temp[0, :, :], extent=extent, origin='upper', transform=ccrs.PlateCarree(), cmap='coolwarm')
-
-# Add a color bar
-cbar = plt.colorbar(temp_plot, ax=ax, orientation='horizontal', pad=0.05)
-cbar.set_label('Temperature')
-
-# Add coastlines and country borders for geographic context
-ax.coastlines()
-ax.add_feature(cfeature.BORDERS, linestyle=':')
-
-# Set title
-plt.title("Temperature Overlay with Geographic Area (Europe)")
-
-# Display and save the plot
-plt.show()
-plt.savefig('temperature_with_geographic_context.png')
-
-"""
-
-
-
-
-
-
-
-
-# Extract latitude and longitude as 2D arrays
-latitudes = ds['latitude'].values  # Shape (x, y)
-longitudes = ds['longitude'].values  # Shape (x, y)
-
-# Stack latitude and longitude arrays along a new dimension to get shape (2, x, y)
-coordinates_tensor = np.stack([latitudes, longitudes], axis=0)
-
-# Save to 'nwp_xy.npy'
-np.save('data/CERRA/static/nwp_xy.npy', coordinates_tensor)
-
-
-# Load grid positions
-static_dir_path = os.path.join("data", "meps_example", "static")
-graph_dir_path = os.path.join("graphs", "multiscale")
-os.makedirs(graph_dir_path, exist_ok=True)
-
-xy = np.load(os.path.join(static_dir_path, "nwp_xy.npy"))
-
-# Extract x and y coordinates from the grid
-x_coords = xy[0, :, :]
-y_coords = xy[1, :, :]
-
-# Plotting the x-y coordinate grid
-plt.figure(figsize=(10, 8))
-plt.scatter(x_coords, y_coords, s=1, color='blue', alpha=0.5)
-plt.xlabel("X Coordinates")
-plt.ylabel("Y Coordinates")
-plt.grid(True)
-
-# Display the plot
-plt.show()
-plt.savefig('grid_representation.png')
+        # Save the stacked array as .npy
+        np.save(output_path, time_encoded_vars)
+        #delete the _PRES.grb file
+        print(f"Saved {output_path}")
+    else:
+        print(f"Warning: File {file_path} is missing required variables.")

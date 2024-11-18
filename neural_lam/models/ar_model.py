@@ -37,11 +37,11 @@ class ARModel(pl.LightningModule):
         self.output_std = bool(args.output_std)
         if self.output_std:
             self.grid_output_dim = (
-                2 * constants.GRID_STATE_DIM
+                2 * constants.GRID_STATE_DIM_CERRA
             )  # Pred. dim. in grid cell
         else:
             self.grid_output_dim = (
-                constants.GRID_STATE_DIM
+                constants.GRID_STATE_DIM_CERRA
             )  # Pred. dim. in grid cell
 
             # Store constant per-variable std.-dev. weighting
@@ -59,9 +59,9 @@ class ARModel(pl.LightningModule):
             grid_static_dim,
         ) = self.grid_static_features.shape  # 63784 = 268x238
         self.grid_dim = (
-            2 * constants.GRID_STATE_DIM
+            2 * constants.GRID_STATE_DIM_CERRA
             + grid_static_dim
-            + constants.GRID_FORCING_DIM
+            + constants.GRID_FORCING_DIM_CERRA
         )
 
         # Instantiate loss function

@@ -33,9 +33,9 @@ class BaseGraphLatentDecoder(nn.Module):
         # use common per-variable std
         self.output_std = output_std
         if self.output_std:
-            output_dim = 2 * constants.GRID_STATE_DIM
+            output_dim = 2 * constants.GRID_STATE_DIM_CERRA
         else:
-            output_dim = constants.GRID_STATE_DIM
+            output_dim = constants.GRID_STATE_DIM_CERRA
 
         # Mapping to parameters of state distribution
         self.param_map = utils.make_mlp(
