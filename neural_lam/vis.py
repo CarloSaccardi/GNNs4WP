@@ -52,7 +52,7 @@ def plot_error_map(errors, title=None, step_length=3):
     y_ticklabels = [
         f"{name} ({unit})"
         for name, unit in zip(
-            constants.PARAM_NAMES_SHORT, constants.PARAM_UNITS
+            constants.PARAM_NAMES_SHORT_CERRA, constants.PARAM_UNITS_CERRA
         )
     ]
     ax.set_yticklabels(y_ticklabels, rotation=30, size=label_size)
@@ -93,7 +93,7 @@ def plot_prediction(pred, target, obs_mask, title=None, vrange=None):
         im = ax.imshow(
             data_grid,
             origin="lower",
-            extent=constants.GRID_LIMITS,
+            extent=constants.GRID_LIMITS_CERRA,
             alpha=pixel_alpha,
             vmin=vmin,
             vmax=vmax,
@@ -137,7 +137,7 @@ def plot_ensemble_prediction(
         vmin, vmax = vrange
 
     # Set up masking of border region
-    mask_reshaped = obs_mask.reshape(*constants.GRID_SHAPE)
+    mask_reshaped = obs_mask.reshape(*constants.GRID_SHAPE_CERRA)
     pixel_alpha = (
         mask_reshaped.clamp(0.7, 1).cpu().numpy()
     )  # Faded border region
@@ -207,11 +207,11 @@ def plot_on_axis(ax, data, alpha=None, vmin=None, vmax=None, ax_title=None):
     Plot weather state on given axis
     """
     ax.coastlines()  # Add coastline outlines
-    data_grid = data.reshape(*constants.GRID_SHAPE).cpu().numpy()
+    data_grid = data.reshape(*constants.GRID_SHAPE_CERRA).cpu().numpy()
     im = ax.imshow(
         data_grid,
         origin="lower",
-        extent=constants.GRID_LIMITS,
+        extent=constants.GRID_LIMITS_CERRA,
         alpha=alpha,
         vmin=vmin,
         vmax=vmax,
@@ -252,7 +252,7 @@ def plot_spatial_error(error, obs_mask, title=None, vrange=None):
     im = ax.imshow(
         error_grid,
         origin="lower",
-        extent=constants.GRID_LIMITS,
+        extent=constants.GRID_LIMITS_CERRA,
         alpha=pixel_alpha,
         vmin=vmin,
         vmax=vmax,

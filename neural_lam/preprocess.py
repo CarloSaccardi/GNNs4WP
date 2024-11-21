@@ -11,7 +11,7 @@ from neural_lam import constants
 
 
 
-def PRES_to_npy(data_folder="'/aspire/CarloData/CERRA/2019'", output_folder="'/aspire/CarloData/samples'"):
+def PRES_to_npy(data_folder="/aspire/CarloData/CERRA/2019", output_folder="/aspire/CarloData/samples"):
     """
     data_folder: str - The folder containing the _PRES.grb files
     output_folder: str - The folder to save the .npy files
@@ -199,6 +199,24 @@ def create_border_mask(shape=(1069, 1069), border_width=10, filename='border_mas
     print(f"Border mask saved to {filename}")
     
     
+def plot_grb_vars():
+    
+    file_path = "/aspire/CarloData/CERRA/2019/CERRA_2019_01_02-03_PRES.grb"
+    ds = xr.open_dataset(file_path, engine='cfgrib')
+    temp = ds['t'].values
+    # Plot the temperature
+    plt.figure(figsize=(10, 6))
+    plt.imshow(temp[15, :, :], cmap="coolwarm", origin="upper")  # Assuming the first time step
+    plt.colorbar(label="Temperature")
+    plt.title("Temperature Field")
+    plt.xlabel("Grid X")
+    plt.ylabel("Grid Y")
+    plt.show()
+    plt.savefig('temp15.png')
+    
+    
     
 if __name__ == "__main__":
-    create_border_mask(shape=(300, 300), border_width=10, filename='data/CERRA/static/border_mask.npy')
+    pass
+    
+    

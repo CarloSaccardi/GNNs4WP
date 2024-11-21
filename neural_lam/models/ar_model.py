@@ -472,7 +472,7 @@ class ARModel(pl.LightningModule):
 
         # Check if metrics are watched, log exact values for specific vars
         if full_log_name in constants.METRICS_WATCH:
-            for var_i, timesteps in constants.VAR_LEADS_METRICS_WATCH.items():
+            for var_i, timesteps in constants.VAR_LEADS_METRICS_WATCH_CERRA.items():
                 var = constants.PARAM_NAMES_SHORT[var_i]
                 log_dict.update(
                     {

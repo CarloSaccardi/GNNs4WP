@@ -29,12 +29,23 @@ VAR_LEADS_METRICS_WATCH = {
     15: [2, 19],  # z_1000
 }
 
+VAR_LEADS_METRICS_WATCH_CERRA = {
+    1: [2, 19],  
+    3: [2, 19],  
+    4: [2, 19],  
+}
+
 # Plot forecasts for these variables at given lead times during validation step
 # Format is a dictionary that maps from a variable index to a list of
 # lead time steps
 VAL_PLOT_VARS = {
     4: [2, 19],  # r_2
     14: [2, 19],  # wvint_0
+}
+
+VAL_PLOT_VARS_CERRA = {
+    1: [2, 19],  # r_2
+    4: [2, 19],  # wvint_0
 }
 
 # During validation, plot example samples of latent variable from prior and
@@ -155,6 +166,13 @@ GRID_LIMITS = [  # In projection
     1310493.4476590226,  # max x
     -1331732.4471934352,  # min y
     1338267.5528065648,  # max y
+]
+
+GRID_LIMITS_CERRA = [  # In projection
+    -827818.2791428552,  # min x
+    822299.7568763249,  # max x
+    -824682.1026900876,  # min y
+    820376.777055046,  # max y
 ]
 
 # Create projection

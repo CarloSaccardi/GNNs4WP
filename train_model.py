@@ -13,7 +13,10 @@ from neural_lam import constants, utils
 from neural_lam.models.graph_efm import GraphEFM
 from neural_lam.models.graph_fm import GraphFM
 from neural_lam.models.graphcast import GraphCast
-from neural_lam.weather_dataset import WeatherDataset
+from neural_lam.weather_dataset import WeatherDataset, WeatherDatasetCERRA
+import os
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 MODELS = {
     "graphcast": GraphCast,
@@ -34,7 +37,7 @@ def main():
     parser.add_argument(
         "--dataset",
         type=str,
-        default="meps_example",
+        default="CERRA",
         help="Dataset, corresponding to name in data directory "
         "(default: meps_example)",
     )
@@ -237,6 +240,7 @@ def main():
     parser.add_argument(
         "--eval",
         type=str,
+        default=None,
         help="Eval model on given data split (val/test) "
         "(default: None (train model))",
     )
@@ -272,7 +276,7 @@ def main():
 
     # Load data
     train_loader = torch.utils.data.DataLoader(
-        WeatherDataset(
+        WeatherDatasetCERRA(
             args.dataset,
             pred_length=args.ar_steps,
             split="train",
@@ -285,8 +289,9 @@ def main():
         num_workers=args.n_workers,
     )
     max_pred_length = (65 // args.step_length) - 2  # 19
+    
     val_loader = torch.utils.data.DataLoader(
-        WeatherDataset(
+        WeatherDatasetCERRA(
             args.dataset,
             pred_length=max_pred_length,
             split="val",
@@ -363,7 +368,7 @@ def main():
         deterministic=True,
         strategy=strategy,
         accelerator=device_name,
-        devices=1,
+        #devices=2,
         logger=logger,
         log_every_n_steps=1,
         callbacks=callbacks,

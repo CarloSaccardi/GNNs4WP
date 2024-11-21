@@ -41,7 +41,7 @@ class GraphEFM(ARModel):
 
         # Specify dimensions of data
         # grid_dim from data + static
-        grid_current_dim = self.grid_dim + constants.GRID_STATE_DIM
+        grid_current_dim = self.grid_dim + constants.GRID_STATE_DIM_CERRA
         g2m_dim = self.g2m_features.shape[1]
         m2g_dim = self.m2g_features.shape[1]
 
@@ -943,9 +943,9 @@ class GraphEFM(ARModel):
                 # prior_traj and enc traj are
                 # (S, pred_steps, num_grid_nodes, d_f)
 
-                for var_i, timesteps in constants.VAL_PLOT_VARS.items():
-                    var_name = constants.PARAM_NAMES_SHORT[var_i]
-                    var_unit = constants.PARAM_UNITS[var_i]
+                for var_i, timesteps in constants.VAL_PLOT_VARS_CERRA.items():
+                    var_name = constants.PARAM_NAMES_SHORT_CERRA[var_i]
+                    var_unit = constants.PARAM_UNITS_CERRA[var_i]
                     for step in timesteps:
                         prior_states = prior_traj[
                             :, step - 1, :, var_i
