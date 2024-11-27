@@ -112,19 +112,22 @@ def resize(input_folder = "data/CERRA/static", output_folder = "data/CERRA/stati
     end_idx = start_idx + new_size  # Ending index
 
     # Process each file
-    for filename in os.listdir(input_folder):
+    # order os.listdir(input_folder) to have the same order of the files
+    directory_sorted = os.listdir(input_folder)
+    directory_sorted.sort()
+    for filename in directory_sorted:
         if filename.endswith(".npy"):
             # Load the .npy file
             file_path = os.path.join(input_folder, filename)
             array = np.load(file_path)
             
             # Check the array shape to ensure compatibility
-            if array.shape[1:3] != (original_size, original_size):
+            if array.shape[0:2] != (original_size, original_size):
                 print(f"Skipping {filename}: unexpected shape {array.shape}")
                 continue
             
             # Slice the central 300x300 grid
-            resized_array = array[:, start_idx:end_idx, start_idx:end_idx, :]
+            resized_array = array[start_idx:end_idx, start_idx:end_idx, :]
             
             # Save the resized array
             output_path = os.path.join(output_folder, filename)
@@ -217,6 +220,7 @@ def plot_grb_vars():
     
     
 if __name__ == "__main__":
-    pass
+    
+    resize(input_folder = "/aspire/CarloData/samples", output_folder = "/aspire/CarloData/samplesResized")
     
     

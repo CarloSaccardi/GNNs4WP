@@ -297,6 +297,7 @@ class WeatherDatasetCERRA(torch.utils.data.Dataset):
             os.path.join(self.sample_dir_path, member_file_regexp)
         )
         self.sample_names = [path.split("/")[-1][4:-4] for path in sample_paths]
+        self.sample_names = sorted(self.sample_names)
         # Now on form "yyymmddhh_mbrXXX"
 
         if subset:
@@ -324,12 +325,40 @@ class WeatherDatasetCERRA(torch.utils.data.Dataset):
 
         # If subsample index should be sampled (only duing training)
         self.random_subsample = split == "train"
+        
+    def stack_samples(self, idx):
+        end_idx = idx + self.original_sample_length
+        if end_idx > len(self.sample_names):
+            sample_names = self.sample_names[idx:]
+            sample_name_last = self.sample_names[-1]
+            stacked_data = np.stack([
+                np.load(os.path.join(self.sample_dir_path, f"nwp_{name}.npy"))
+                for name in sample_names
+            ])
+            
+            num_missing = self.original_sample_length - len(stacked_data)
+            last_sample = np.load(os.path.join(self.sample_dir_path, f"nwp_{sample_name_last}.npy"))
+            repeated_last_samples = np.tile(last_sample[np.newaxis, ...], (num_missing, 1, 1, 1))
+            stacked_data = np.concatenate((stacked_data, repeated_last_samples), axis=0)
+        
+        else:
+            sample_names = self.sample_names[idx:end_idx]
+
+            # Load all .npy files and stack into a single numpy array
+            stacked_data = np.stack([
+                np.load(os.path.join(self.sample_dir_path, f"nwp_{name}.npy"))
+                for name in sample_names
+            ])
+            # Convert the stacked numpy array to a torch tensor
+        return torch.tensor(stacked_data, dtype=torch.float32)
+
 
     def __len__(self):
         return len(self.sample_names)
 
     def __getitem__(self, idx):
         # === Sample ===
+        """
         sample_name = self.sample_names[idx]
         sample_path = os.path.join(
             self.sample_dir_path, f"nwp_{sample_name}.npy"
@@ -340,6 +369,9 @@ class WeatherDatasetCERRA(torch.utils.data.Dataset):
             )  # (N_t', dim_x, dim_y, d_features')
         except ValueError:
             print(f"Failed to load {sample_path}")
+        """
+        sample_name = self.sample_names[idx]
+        sample = self.stack_samples(idx)
 
         # Only use every ss_step:th time step, sample which of ss_step
         # possible such time series

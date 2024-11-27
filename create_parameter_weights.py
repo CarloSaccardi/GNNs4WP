@@ -47,7 +47,7 @@ def main():
 
     # Create parameter weights based on height
     # based on fig A.1 in graph cast paper
-    w_dict = {
+    w_dict_original = {
         "2": 1.0,
         "0": 0.1,
         "65": 0.065,
@@ -55,6 +55,16 @@ def main():
         "850": 0.05,
         "500": 0.03,
     }
+    
+    w_dict = {
+        "2": 1.0,
+        "0": 1.0,
+        "65": 1.0,
+        "1000": 1.0,
+        "850": 1.0,
+        "500": 1.0,
+    }
+    
     w_list = np.array(
         [w_dict[par.split("_")[-2]] for par in constants.PARAM_NAMES_CERRA]
     )

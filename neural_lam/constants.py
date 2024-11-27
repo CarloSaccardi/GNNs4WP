@@ -82,11 +82,11 @@ PARAM_NAMES_CERRA = [
 ]
 
 PARAM_NAMES_SHORT_CERRA = [
-    "pres_0g",
-    "pres_0s",
-    "nlwrs_0",
-    "nswrs_0",
-    "nswrs_0"
+    "u_wind",
+    "v_wind",
+    "geopotential",
+    "temp",
+    "specific_humidity"
 ]
 
 PARAM_NAMES_SHORT = [
@@ -177,11 +177,11 @@ GRID_LIMITS_CERRA = [  # In projection
 
 # Create projection
 LAMBERT_PROJ = cartopy.crs.LambertConformal(
-    central_longitude=LAMBERT_PROJ_PARAMS["lon_0"],
-    central_latitude=LAMBERT_PROJ_PARAMS["lat_0"],
+    central_longitude=LAMBERT_PROJ_PARAMS_CERRA["lon_0"],
+    central_latitude=LAMBERT_PROJ_PARAMS_CERRA["lat_0"],
     standard_parallels=(
-        LAMBERT_PROJ_PARAMS["lat_1"],
-        LAMBERT_PROJ_PARAMS["lat_2"],
+        LAMBERT_PROJ_PARAMS_CERRA["lat_1"],
+        LAMBERT_PROJ_PARAMS_CERRA["lat_2"],
     ),
 )
 

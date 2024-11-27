@@ -818,7 +818,7 @@ class GraphEFM(ARModel):
                     )
                     for var_i, (var_name, var_unit, var_vrange) in enumerate(
                         zip(
-                            constants.PARAM_NAMES_SHORT,
+                            constants.PARAM_NAMES_SHORT_CERRA,
                             constants.PARAM_UNITS,
                             var_vranges,
                         )
@@ -830,7 +830,7 @@ class GraphEFM(ARModel):
                     {
                         f"{var_name}_{example_title}": wandb.Image(fig)
                         for var_name, fig in zip(
-                            constants.PARAM_NAMES_SHORT, var_figs
+                            constants.PARAM_NAMES_SHORT_CERRA, var_figs
                         )
                     }
                 )

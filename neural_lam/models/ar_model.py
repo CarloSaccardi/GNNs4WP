@@ -405,7 +405,7 @@ class ARModel(pl.LightningModule):
                     )
                     for var_i, (var_name, var_unit, var_vrange) in enumerate(
                         zip(
-                            constants.PARAM_NAMES_SHORT,
+                            constants.PARAM_NAMES_SHORT_CERRA,
                             constants.PARAM_UNITS,
                             var_vranges,
                         )
@@ -417,7 +417,7 @@ class ARModel(pl.LightningModule):
                     {
                         f"{var_name}_example_{example_i}": wandb.Image(fig)
                         for var_name, fig in zip(
-                            constants.PARAM_NAMES_SHORT, var_figs
+                            constants.PARAM_NAMES_SHORT_CERRA, var_figs
                         )
                     }
                 )
@@ -473,7 +473,7 @@ class ARModel(pl.LightningModule):
         # Check if metrics are watched, log exact values for specific vars
         if full_log_name in constants.METRICS_WATCH:
             for var_i, timesteps in constants.VAR_LEADS_METRICS_WATCH_CERRA.items():
-                var = constants.PARAM_NAMES_SHORT[var_i]
+                var = constants.PARAM_NAMES_SHORT_CERRA[var_i]
                 log_dict.update(
                     {
                         f"{full_log_name}_{var}_step_{step}": metric_tensor[

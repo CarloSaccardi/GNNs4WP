@@ -16,7 +16,7 @@ from neural_lam.models.graphcast import GraphCast
 from neural_lam.weather_dataset import WeatherDataset, WeatherDatasetCERRA
 import os
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
 
 MODELS = {
     "graphcast": GraphCast,
@@ -60,7 +60,7 @@ def main():
     parser.add_argument(
         "--n_workers",
         type=int,
-        default=4,
+        default=3,
         help="Number of workers in data loader (default: 4)",
     )
     parser.add_argument(
@@ -70,7 +70,7 @@ def main():
         help="upper epoch limit (default: 200)",
     )
     parser.add_argument(
-        "--batch_size", type=int, default=4, help="batch size (default: 4)"
+        "--batch_size", type=int, default=1, help="batch size (default: 4)"
     )
     parser.add_argument(
         "--load",
@@ -270,6 +270,8 @@ def main():
 
     # Get an (actual) random run id as a unique identifier
     random_run_id = random.randint(0, 9999)
+    args.n_workers = len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    print(f"Using {args.n_workers} GPUs")
 
     # Set seed
     seed.seed_everything(args.seed)
@@ -296,7 +298,7 @@ def main():
             pred_length=max_pred_length,
             split="val",
             subsample_step=args.step_length,
-            subset=bool(args.subset_ds),
+            subset=True,
             control_only=args.control_only,
         ),
         args.batch_size,
