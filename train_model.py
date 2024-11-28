@@ -16,7 +16,7 @@ from neural_lam.models.graphcast import GraphCast
 from neural_lam.weather_dataset import WeatherDataset, WeatherDatasetCERRA
 import os
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2"
 
 MODELS = {
     "graphcast": GraphCast,
@@ -376,6 +376,7 @@ def main():
         callbacks=callbacks,
         check_val_every_n_epoch=args.val_interval,
         precision=args.precision,
+        #profiler="simple",
     )
 
     # Only init once, on rank 0 only
@@ -407,6 +408,7 @@ def main():
             model=model,
             train_dataloaders=train_loader,
             val_dataloaders=val_loader,
+            
         )
 
 

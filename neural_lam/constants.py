@@ -9,7 +9,8 @@ SECONDS_IN_YEAR = (
 )  # Assuming no leap years in dataset (2024 is next)
 
 # Log prediction error for these lead times
-VAL_STEP_LOG_ERRORS = np.array([1, 2, 3, 5, 10, 15, 19])
+#VAL_STEP_LOG_ERRORS = np.array([1, 2, 3, 5, 10, 15, 19])
+VAL_STEP_LOG_ERRORS = np.array([1])
 # Also save checkpoints for minimum loss at these lead times
 VAL_STEP_CHECKPOINTS = (1, 19)
 
