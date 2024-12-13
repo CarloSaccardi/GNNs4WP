@@ -10,9 +10,10 @@ SECONDS_IN_YEAR = (
 
 # Log prediction error for these lead times
 #VAL_STEP_LOG_ERRORS = np.array([1, 2, 3, 5, 10, 15, 19])
-VAL_STEP_LOG_ERRORS = np.array([1])
+VAL_STEP_LOG_ERRORS = np.array([1, 3])
 # Also save checkpoints for minimum loss at these lead times
-VAL_STEP_CHECKPOINTS = (1, 19)
+#VAL_STEP_CHECKPOINTS = (1, 19)
+VAL_STEP_CHECKPOINTS = (1, 3)
 
 # Log these metrics to wandb as scalar values for
 # specific variables and lead times
@@ -25,28 +26,28 @@ METRICS_WATCH = [
 # Format is a dictionary that maps from a variable index to
 # a list of lead time steps
 VAR_LEADS_METRICS_WATCH = {
-    6: [2, 19],  # t_2
-    14: [2, 19],  # wvint_0
-    15: [2, 19],  # z_1000
+    6: [1, 3],  # t_2
+    14: [1, 3],  # wvint_0
+    15: [1, 3],  # z_1000
 }
 
 VAR_LEADS_METRICS_WATCH_CERRA = {
-    1: [2, 19],  
-    3: [2, 19],  
-    4: [2, 19],  
+    1: [1, 3],  
+    3: [1, 3],  
+    4: [1, 3],  
 }
 
 # Plot forecasts for these variables at given lead times during validation step
 # Format is a dictionary that maps from a variable index to a list of
 # lead time steps
 VAL_PLOT_VARS = {
-    4: [2, 19],  # r_2
-    14: [2, 19],  # wvint_0
+    4: [1, 3],  # r_2
+    14: [1, 3],  # wvint_0
 }
 
 VAL_PLOT_VARS_CERRA = {
-    1: [2, 19],  # r_2
-    4: [2, 19],  # wvint_0
+    1: [1, 3],  # r_2
+    4: [1, 3],  # wvint_0
 }
 
 # During validation, plot example samples of latent variable from prior and

@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import easydict
 from pyproj import Transformer
 from neural_lam import constants
-
+import logging
 
 
 def PRES_to_npy(data_folder="/aspire/CarloData/CERRA/2019", output_folder="/aspire/CarloData/samples"):
@@ -46,7 +46,7 @@ def PRES_to_npy(data_folder="/aspire/CarloData/CERRA/2019", output_folder="/aspi
             
             
             # Stack the time encoding arrays along the last axis
-            time_encoded_vars = np.concatenate([main_vars], axis=-1)[0]
+            time_encoded_vars = np.concatenate([main_vars], axis=-1)[0] # Assuming the first pressure level
 
             # Save the stacked array as .npy
             np.save(output_path, time_encoded_vars)
@@ -91,136 +91,293 @@ def concatenate_npy_files(data_folder="'/aspire/CarloData/samples'", output_fold
         np.save(output_path, stacked_data)
 
         print(f"Saved: {output_path}")
-        
-        
-def resize(input_folder = "data/CERRA/static", output_folder = "data/CERRA/static"):
-    """
-    input_folder: str - The folder containing the .npy files to resize
-    output_folder: str - The folder to save the resized .npy files
+
+class CERRA():
     
-    This function resizes the 1069x1069 arrays in the input_folder to 300x300 arrays and saves them in the output_folder.
-    1069x1069 represent the entire Europe, which for now is too big and runs in memory issues.
-    300x300 is a more manageable size but have to find an alternative on how we select the area of interest. For now we just take the central 300x300 grid.
-    """
+    DEFAULT_GRID_SIZE = 1069  # Default size of the input .npy arrays
+    
+    def __init__(self, grid_size: int, npy_samples_path_in: str, npy_samples_path_out: str, original_grb_path: str):
 
-    os.makedirs(output_folder, exist_ok=True)  # Ensure the output folder exists
+        
+        self.grid_size = grid_size # The size of the grid to resize the .npy files to
+        self.npy_samples_path_in = npy_samples_path_in # The folder containing the original 1069x1069 .npy files
+        self.npy_samples_path_out = npy_samples_path_out # The folder to save the resized .npy files
+        self.original_grb_path = original_grb_path # The path to the original .grb file needed to compute static features
+        
+    def ensure_dir(self, path: str) -> str:
+        """
+        Ensure the specified directory exists, creating it if necessary.
+        
+        Parameters:
+        - path (str): Path to the directory.
+        
+        Returns:
+        - str: The path to the ensured directory.
+        """
+        os.makedirs(path, exist_ok=True)
+        return path
 
-    # Parameters for slicing
-    original_size = 1069
-    new_size = 300
-    start_idx = (original_size - new_size) // 2  # Starting index for the 300x300 grid
-    end_idx = start_idx + new_size  # Ending index
+    
+    
+    
+    def plot_on_axis(self, data, alpha=None, vmin=None, vmax=None, ax_title=None):
+        """
+        Plot weather state on given axis
+        """
+        _, axes = plt.subplots(
+            3,
+            3,
+            figsize=(15, 15),
+            subplot_kw={"projection": constants.LAMBERT_PROJ},
+        )
+        ax = axes.flatten()
+        ax = ax[0]
+        
+        
+        ax.coastlines()  # Add coastline outlines
+        data_grid = data.reshape(self.grid_size).cpu().numpy()
+        im = ax.imshow(
+            data_grid,
+            origin="lower",
+            extent=constants.GRID_LIMITS_CERRA,
+            alpha=alpha,
+            vmin=vmin,
+            vmax=vmax,
+            cmap="plasma",
+        )
 
-    # Process each file
-    # order os.listdir(input_folder) to have the same order of the files
-    directory_sorted = os.listdir(input_folder)
-    directory_sorted.sort()
-    for filename in directory_sorted:
-        if filename.endswith(".npy"):
-            # Load the .npy file
-            file_path = os.path.join(input_folder, filename)
-            array = np.load(file_path)
-            
-            # Check the array shape to ensure compatibility
-            if array.shape[0:2] != (original_size, original_size):
-                print(f"Skipping {filename}: unexpected shape {array.shape}")
+        if ax_title:
+            ax.set_title(ax_title, size=15)
+        return im
+    
+    
+    def extract_subgrid(self, center_lat: float, center_lon: float, grid_size: int, folder: str = "samples", plot: bool = True):
+        """
+        Extract a sub-grid from the CERRA dataset centered at a specified location and of a given size.
+
+        Parameters:
+        - center_lat (float): Latitude of the center point of the desired sub-grid.
+        - center_lon (float): Longitude of the center point of the desired sub-grid.
+        - grid_size (int): Size of the sub-grid (grid_size x grid_size).
+        - folder (str): Folder to save the extracted sub-grid.
+        - plot (bool): Whether to plot the extracted sub-grid for visualization.
+        
+        Returns:
+        - None: Saves the extracted sub-grid to the specified folder.
+        """
+        save_dir = self.ensure_dir(os.path.join(self.npy_samples_path_out, folder))
+
+        # Load latitude and longitude arrays
+        ds = xr.open_dataset(self.original_grb_path, engine='cfgrib')
+        lat = ds['latitude'].values
+        lon = ds['longitude'].values
+        lon[lon > 180] -= 360  # Adjust longitude range
+
+        # Find the nearest indices for the center point
+        lat_idx = np.abs(lat - center_lat).argmin()
+        lon_idx = np.abs(lon - center_lon).argmin()
+        
+        # Calculate start and end indices for slicing
+        half_size = grid_size // 2
+        start_lat_idx = max(lat_idx - half_size, 0)
+        end_lat_idx = min(lat_idx + half_size, lat.shape[0])
+        start_lon_idx = max(lon_idx - half_size, 0)
+        end_lon_idx = min(lon_idx + half_size, lon.shape[1])
+
+        # Log extracted indices for debugging
+        logging.info(f"Extracting grid with size {grid_size}x{grid_size}")
+        logging.info(f"Latitude indices: {start_lat_idx} to {end_lat_idx}")
+        logging.info(f"Longitude indices: {start_lon_idx} to {end_lon_idx}")
+
+        # Process each .npy file
+        for filename in sorted(os.listdir(self.npy_samples_path_in)):
+            if not filename.endswith(".npy"):
+                logging.warning(f"Skipping non-npy file: {filename}")
                 continue
-            
-            # Slice the central 300x300 grid
-            resized_array = array[start_idx:end_idx, start_idx:end_idx, :]
-            
-            # Save the resized array
-            output_path = os.path.join(output_folder, filename)
-            np.save(output_path, resized_array)
-            print(f"Resized and saved {filename} to {output_path}")
-            
-def LatLon_to_LambertProj(path, save_dir, plot=False):
-    
-    """
-    Convert latitude and longitude coordinates to Lambert Conformal projection coordinates.
-    """
-    
-    ds = xr.open_dataset(path, engine='cfgrib')
 
-    lon = ds['longitude'].values
-    lat = ds['latitude'].values
-    lon[lon > 180] = lon[lon > 180] - 360
+            file_path = os.path.join(self.npy_samples_path_in, filename)
+            try:
+                array = np.load(file_path)
+            except Exception as e:
+                logging.error(f"Error loading {filename}: {e}")
+                continue
 
-    pp = easydict.EasyDict(constants.LAMBERT_PROJ_PARAMS_CERRA)
-    mycrs = f"+proj=lcc +lat_0={pp.lat_0} +lon_0={pp.lon_0} +lat_1={pp.lat_1} +lat_2={pp.lat_2} +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+        # Extract the sub-grid
+        subgrid = array[start_lat_idx:end_lat_idx, start_lon_idx:end_lon_idx, :]
 
-    crstrans = Transformer.from_crs("EPSG:4326", mycrs, always_xy=True)
-    x, y = crstrans.transform(lon, lat)
+        # Save the sub-grid
+        output_path = os.path.join(save_dir, filename)
+        np.save(output_path, subgrid)
+        logging.info(f"Sub-grid saved to {output_path}")
 
-    xy = np.array([x, y]) # shape = (2, n_lon, n_lat)
-    
-    if plot:
-        plt.figure(figsize=(10, 8))
-        plt.scatter(x, y, s=1, color='blue', alpha=0.5)
-        plt.xlabel("X Coordinates")
-        plt.ylabel("Y Coordinates")
-        plt.grid(True)
-        plt.show()
-        plt.savefig('grid_representationWRONG.png')
+        # Plot the sub-grid for visual inspection
+        if plot:
+            plt.figure(figsize=(8, 6))
+            plt.imshow(subgrid[:, :, 0], cmap="viridis")  # Plot the first variable layer
+            plt.title(f"Sub-grid centered at ({center_lat}, {center_lon})")
+            plt.xlabel("Longitude Index")
+            plt.ylabel("Latitude Index")
+            plt.colorbar(label="Variable Value")
+            plt.show()
         
-    np.save(save_dir, xy)
-    
-    
-def get_topography(path, save_dir):
-    """
-    Extract the surface geopotential from a GRIB file and
-    """
-    
-    surface_data = cfgrib.open_datasets(path)
-    surface_geopotential = surface_data[-1]["orog"].values
-    np.save(save_dir, surface_geopotential)
-    
-    
-def create_border_mask(shape=(1069, 1069), border_width=10, filename='border_mask.npy'):
-    """
-    Create a mask with True values along the border and False elsewhere.
-    
-    Parameters:
-    - shape (tuple): The shape of the mask array, default is (1069, 1069).
-    - border_width (int): The width of the border (in grid nodes) to set as True.
-    - filename (str): The filename to save the mask as, default is 'border_mask.npy'.
-    
-    Returns:
-    - None: Saves the mask array to a .npy file.
-    """
-    # Initialize the mask array with False
-    border_mask = np.zeros(shape, dtype=bool)
+            
+    def resize(self, folder: str = "samples"):
+        """
+        Resize .npy files from the input path to a central cropped grid and save them.
 
-    # Set the border to True
-    border_mask[:border_width, :] = True         # Top border
-    border_mask[-border_width:, :] = True        # Bottom border
-    border_mask[:, :border_width] = True         # Left border
-    border_mask[:, -border_width:] = True        # Right border
+        Parameters:
+        - folder (str): Name of the folder where resized files will be saved.
+        """
+        save_dir = self.ensure_dir(os.path.join(self.npy_samples_path_out, folder))
+        original_size = self.DEFAULT_GRID_SIZE
 
-    # Save the mask to a .npy file
-    np.save(filename, border_mask)
-    print(f"Border mask saved to {filename}")
-    
-    
-def plot_grb_vars():
-    
-    file_path = "/aspire/CarloData/CERRA/2019/CERRA_2019_01_02-03_PRES.grb"
-    ds = xr.open_dataset(file_path, engine='cfgrib')
-    temp = ds['t'].values
-    # Plot the temperature
-    plt.figure(figsize=(10, 6))
-    plt.imshow(temp[15, :, :], cmap="coolwarm", origin="upper")  # Assuming the first time step
-    plt.colorbar(label="Temperature")
-    plt.title("Temperature Field")
-    plt.xlabel("Grid X")
-    plt.ylabel("Grid Y")
-    plt.show()
-    plt.savefig('temp15.png')
-    
-    
+        # Calculate slicing indices
+        start_idx = (original_size - self.grid_size) // 2
+        end_idx = start_idx + self.grid_size
+
+        for filename in sorted(os.listdir(self.npy_samples_path_in)):
+            
+            if filename.endswith(".npy"):
+                # Load the .npy file
+                file_path = os.path.join(self.npy_samples_path_in, filename)
+                array = np.load(file_path)
+                
+                # Check the array shape to ensure compatibility
+                if array.shape[:2] != (original_size, original_size):
+                    logging.warning(f"Skipping {filename}: unexpected shape {array.shape}")
+                    continue
+                
+                # Slice the central 300x300 grid
+                resized_array = array[start_idx:end_idx, start_idx:end_idx, :]
+                
+                # Save the resized array
+                output_path = os.path.join(save_dir, filename)
+                np.save(output_path, resized_array)
+                logging.info(f"Resized and saved {filename} to {output_path}")
+                
+    def LatLon_to_LambertProj(self, filename: str = "nwp_xy.npy", folder: str = "static", plot: bool = False):
+        """
+        Convert latitude and longitude coordinates to Lambert Conformal projection coordinates.
+
+        Parameters:
+        - filename (str): Name of the file to save the projected coordinates.
+        - folder (str): Name of the folder where the file will be saved.
+        - plot (bool): Whether to visualize the coordinates in a scatter plot.
+        """
+        save_dir = self.ensure_dir(os.path.join(self.npy_samples_path_out, folder))
+        
+        ds = xr.open_dataset(self.original_grb_path, engine='cfgrib')
+
+        lon = ds['longitude'].values
+        lat = ds['latitude'].values
+        lon[lon > 180] = lon[lon > 180] - 360
+
+        pp = easydict.EasyDict(constants.LAMBERT_PROJ_PARAMS_CERRA)
+        mycrs = f"+proj=lcc +lat_0={pp.lat_0} +lon_0={pp.lon_0} +lat_1={pp.lat_1} +lat_2={pp.lat_2} +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+
+        crstrans = Transformer.from_crs("EPSG:4326", mycrs, always_xy=True)
+        x, y = crstrans.transform(lon, lat)
+
+        xy = np.array([x, y]) # shape = (2, n_lon, n_lat)
+        original_size = self.DEFAULT_GRID_SIZE
+        start_idx = (original_size - self.grid_size) // 2
+        end_idx = start_idx + self.grid_size
+        
+        xy = xy[:, start_idx:end_idx, start_idx:end_idx]
+        
+        np.save(os.path.join(save_dir, filename), xy)
+        
+        if plot:
+            plt.figure(figsize=(10, 8))
+            plt.scatter(x, y, s=1, color='blue', alpha=0.5)
+            plt.xlabel("X Coordinates")
+            plt.ylabel("Y Coordinates")
+            plt.grid(True)
+            plt.show()
+            plt.savefig('grid_representationWRONG.png')
+        
+        
+    def get_topography(self, folder: str, filename: str):
+        """
+        Extract the surface geopotential from a GRIB file and save it.
+        
+        Parameters:
+        - path (str): Path to the GRIB file.
+        - save_dir (str): Path to save the extracted data.
+        """
+        save_dir = self.ensure_dir(os.path.join(self.npy_samples_path_out, folder, filename))
+        
+        try:
+            surface_data = cfgrib.open_datasets(path)
+            surface_geopotential = surface_data[-1]["orog"].values
+            np.save(save_dir, surface_geopotential)
+            logging.info(f"Topography data saved to {save_dir}")
+        except Exception as e:
+            logging.error(f"Error extracting topography: {e}")
+        
+        
+    def create_border_mask(self, border_width: int = 10, folder: str = "static", filename: str = 'border_mask.npy'):
+        """
+        Create a mask with True values along the border and False elsewhere.
+
+        Parameters:
+        - border_width (int): Width of the border to set as True.
+        - folder (str): Folder to save the mask.
+        - filename (str): Name of the file to save the mask.
+        """
+        border_mask = np.zeros((self.grid_size, self.grid_size), dtype=bool)
+        border_mask[:border_width, :] = True
+        border_mask[-border_width:, :] = True
+        border_mask[:, :border_width] = True
+        border_mask[:, -border_width:] = True
+
+        save_dir = self.ensure_dir(os.path.join(self.npy_samples_path_out, folder))
+        np.save(os.path.join(save_dir, filename), border_mask)
+        logging.info(f"Border mask saved to {os.path.join(save_dir, filename)}")
+        
+        
+    def create_dataset(self, samples_folder: str = "samples", static_folder: str = "static", border_width: int = 10, plot: bool = False):
+        """
+        Create the pre-processed dataset by orchestrating the individual steps.
+        Parameters:
+        - samples_folder (str): Folder name to save resized .npy files.
+        - static_folder (str): Folder name to save static features.
+        - border_width (int): Border width for the mask.
+        - plot (bool): Whether to plot the Lambert projection.
+        """
+        # Step 1: Resize samples
+        logging.info("Starting resizing of samples...")
+        self.resize(folder=samples_folder)
+
+        # Step 2: Generate Lambert projection static file
+        logging.info("Generating Lambert projection static file...")
+        self.LatLon_to_LambertProj(folder=static_folder, plot=plot)
+
+        # Step 3: Get topography data
+        logging.info("Extracting topography...")
+
+        self.get_topography(folder="static", filename="surface_geopotential.npy")
+
+        # Step 4: Create border mask
+        logging.info("Creating border mask...")
+        self.create_border_mask(border_width=border_width, folder=static_folder)
+
+        logging.info("Dataset creation complete.")
+
+        
+        
     
 if __name__ == "__main__":
     
-    resize(input_folder = "/aspire/CarloData/samples", output_folder = "/aspire/CarloData/samplesResized")
+    cerra = CERRA(grid_size=200, 
+                  npy_samples_path_in="/aspire/CarloData/samples", 
+                  npy_samples_path_out="/aspire/CarloData/CERRA/grid_200", 
+                  original_grb_path="/aspire/CarloData/CERRA/2017/CERRA_2017_01_01-00_PRES.grb")
+    
+    
+    cerra.create_dataset(samples_folder="samples", 
+                         static_folder="static", 
+                         border_width=10, 
+                         plot=False)
     
     
