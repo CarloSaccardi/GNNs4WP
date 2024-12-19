@@ -9,6 +9,7 @@ import easydict
 from pyproj import Transformer
 from neural_lam import constants
 import logging
+import pathlib
 
 
 def PRES_to_npy(data_folder="/aspire/CarloData/CERRA/2019", output_folder="/aspire/CarloData/samples"):
@@ -94,15 +95,15 @@ def concatenate_npy_files(data_folder="'/aspire/CarloData/samples'", output_fold
 
 class CERRA():
     
-    DEFAULT_GRID_SIZE = 1069  # Default size of the input .npy arrays
     
-    def __init__(self, grid_size: int, npy_samples_path_in: str, npy_samples_path_out: str, original_grb_path: str):
+    def __init__(self, grid_size: int, npy_samples_path_in: str, npy_samples_path_out: str, original_grb_path: str, default_grid_size: int):
 
         
         self.grid_size = grid_size # The size of the grid to resize the .npy files to
         self.npy_samples_path_in = npy_samples_path_in # The folder containing the original 1069x1069 .npy files
         self.npy_samples_path_out = npy_samples_path_out # The folder to save the resized .npy files
         self.original_grb_path = original_grb_path # The path to the original .grb file needed to compute static features
+        self.default_grid_size = default_grid_size # The default size of the input .npy arrays
         
     def ensure_dir(self, path: str) -> str:
         """
@@ -243,9 +244,11 @@ class CERRA():
                 array = np.load(file_path)
                 
                 # Check the array shape to ensure compatibility
+                """
                 if array.shape[:2] != (original_size, original_size):
                     logging.warning(f"Skipping {filename}: unexpected shape {array.shape}")
                     continue
+                """
                 
                 # Slice the central 300x300 grid
                 resized_array = array[start_idx:end_idx, start_idx:end_idx, :]
@@ -255,7 +258,7 @@ class CERRA():
                 np.save(output_path, resized_array)
                 logging.info(f"Resized and saved {filename} to {output_path}")
                 
-    def LatLon_to_LambertProj(self, filename: str = "nwp_xy.npy", folder: str = "static", plot: bool = False):
+    def LatLon_to_LambertProj(self, filename: str = "nwp_xy_base.npy", folder: str = "static", plot: bool = False):
         """
         Convert latitude and longitude coordinates to Lambert Conformal projection coordinates.
 
@@ -266,24 +269,29 @@ class CERRA():
         """
         save_dir = self.ensure_dir(os.path.join(self.npy_samples_path_out, folder))
         
-        ds = xr.open_dataset(self.original_grb_path, engine='cfgrib')
+        #ds = xr.open_dataset(self.original_grb_path, engine='cfgrib')
+        f = pathlib.Path(self.original_grb_path)
+        ds = xr.open_dataset(f)
 
         lon = ds['longitude'].values
         lat = ds['latitude'].values
         lon[lon > 180] = lon[lon > 180] - 360
+        
+        if len(lon.shape) == 1:
+            lon, lat = np.meshgrid(lon, lat)
 
-        pp = easydict.EasyDict(constants.LAMBERT_PROJ_PARAMS_CERRA)
-        mycrs = f"+proj=lcc +lat_0={pp.lat_0} +lon_0={pp.lon_0} +lat_1={pp.lat_1} +lat_2={pp.lat_2} +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+        #pp = easydict.EasyDict(constants.LAMBERT_PROJ_PARAMS_CERRA)
+        #mycrs = f"+proj=lcc +lat_0={pp.lat_0} +lon_0={pp.lon_0} +lat_1={pp.lat_1} +lat_2={pp.lat_2} +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
 
-        crstrans = Transformer.from_crs("EPSG:4326", mycrs, always_xy=True)
-        x, y = crstrans.transform(lon, lat)
+        #crstrans = Transformer.from_crs("EPSG:4326", mycrs, always_xy=True)
+        #x, y = crstrans.transform(lon, lat)
 
-        xy = np.array([x, y]) # shape = (2, n_lon, n_lat)
-        original_size = self.DEFAULT_GRID_SIZE
+        xy = np.array([lon, lat]) # shape = (2, n_lon, n_lat)
+        original_size = self.default_grid_size
         start_idx = (original_size - self.grid_size) // 2
         end_idx = start_idx + self.grid_size
         
-        xy = xy[:, start_idx:end_idx, start_idx:end_idx]
+        #xy = xy[:, start_idx:end_idx, start_idx:end_idx]
         
         np.save(os.path.join(save_dir, filename), xy)
         
@@ -346,8 +354,8 @@ class CERRA():
         - plot (bool): Whether to plot the Lambert projection.
         """
         # Step 1: Resize samples
-        logging.info("Starting resizing of samples...")
-        self.resize(folder=samples_folder)
+        #logging.info("Starting resizing of samples...")
+        #self.resize(folder=samples_folder)
 
         # Step 2: Generate Lambert projection static file
         logging.info("Generating Lambert projection static file...")
@@ -368,11 +376,19 @@ class CERRA():
         
     
 if __name__ == "__main__":
+    """
+    cerra = CERRA(grid_size=90, 
+                  npy_samples_path_in="/aspire/CarloData/ERA5/2017/samples_2017", 
+                  npy_samples_path_out="data/ERA5/2017/samples_60x60", 
+                  original_grb_path="/aspire/CarloData/ERA5/2017/data_stream-oper_stepType-instant.nc",
+                  default_grid_size=175)
     
-    cerra = CERRA(grid_size=200, 
+    """
+    cerra = CERRA(grid_size=300, 
                   npy_samples_path_in="/aspire/CarloData/samples", 
-                  npy_samples_path_out="/aspire/CarloData/CERRA/grid_200", 
-                  original_grb_path="/aspire/CarloData/CERRA/2017/CERRA_2017_01_01-00_PRES.grb")
+                  npy_samples_path_out="data/CERRA", 
+                  original_grb_path="/aspire/CarloData/CERRA/2017/CERRA_2017_01_01-00_PRES.grb",
+                  default_grid_size=1069)
     
     
     cerra.create_dataset(samples_folder="samples", 

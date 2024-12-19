@@ -177,6 +177,15 @@ GRID_LIMITS_CERRA = [  # In projection
     820376.777055046,  # max y
 ]
 
+GRID_LIMITS_ERA5 = [  # In projection
+    -849330.3798651152,  # min x
+    583102.6842001906,  # max x
+    -1914161.8021956917,  # min y
+    -211915.60464482158,  # max y
+]
+
+
+
 # Create projection
 LAMBERT_PROJ = cartopy.crs.LambertConformal(
     central_longitude=LAMBERT_PROJ_PARAMS_CERRA["lon_0"],
