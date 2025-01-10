@@ -15,7 +15,7 @@ import torch_geometric as pyg
 from torch_geometric.utils.convert import from_networkx
 
 #set cuda visible devices
-os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 
 def plot_graph_nodes_only(graph, title=None):
@@ -297,14 +297,14 @@ def main():
     parser.add_argument(
         "--dataset_low",
         type=str,
-        default="ERA5/2017/samples_60x60",
+        default="ERA5/60_n2_40_18/2017",
         help="Dataset to load grid point coordinates from "
         "(default: meps_example)",
     )
     parser.add_argument(
         "--dataset_high",
         type=str,
-        default="CERRA",
+        default="CERRA_interpolated",
         help="Dataset to load grid point coordinates from "
         "(default: meps_example)",
     )
@@ -333,6 +333,12 @@ def main():
         default=1,
         help="Generate hierarchical mesh graph (default: 0, no)",
     )
+    parser.add_argument(
+        "--interpolate",
+        type=bool,
+        default=False,
+        help="Interpolate CERRA gird coordinates to ERA5 grid coordinates (default: False)",
+    )
     args = parser.parse_args()
     
     graph_dir_path = os.path.join("graphs", args.graph)
@@ -340,11 +346,12 @@ def main():
     
     # Load grid positions low resolution
     static_dir_path_low = os.path.join("data", args.dataset_low, "static")
-    xy_low = np.load(os.path.join(static_dir_path_low, "nwp_xy_base.npy"))
+    xy_low = np.load(os.path.join(static_dir_path_low, "nwp_xy.npy"))
     
     # Load grid positions high resolution
     static_dir_path_high = os.path.join("data", args.dataset_high, "static")
-    xy_high = np.load(os.path.join(static_dir_path_high, "nwp_xy_base.npy"))
+    xy_high = np.load(os.path.join(static_dir_path_high, "nwp_xy.npy"))
+        
 
     grid_xy_low = torch.tensor(xy_low)
     pos_max_low = torch.max(torch.abs(grid_xy_low))
@@ -625,22 +632,22 @@ def main():
     # add edges from mesh to grid
     for v in vg_list:
         # find 4 nearest neighbours (index to vm_xy)
-        neigh_idxs = kdt_m.query(G_grid.nodes[v]["pos"], 4)[1]
+        neigh_idxs = kdt_m.query(G_grid_masked.nodes[v]["pos"], 4)[1]
         for i in neigh_idxs:
             u = vm_list[i]
             # add edge from mesh to grid
-            G_grid.add_edge(u, v)
+            G_grid_masked.add_edge(u, v)
             d = np.sqrt(
-                np.sum((G_grid.nodes[u]["pos"] - G_grid.nodes[v]["pos"]) ** 2)
+                np.sum((G_grid_masked.nodes[u]["pos"] - G_grid_masked.nodes[v]["pos"]) ** 2)
             )
-            G_grid.edges[u, v]["len"] = d
-            G_grid.edges[u, v]["vdiff"] = (
-                G_grid.nodes[u]["pos"] - G_grid.nodes[v]["pos"]
+            G_grid_masked.edges[u, v]["len"] = d
+            G_grid_masked.edges[u, v]["vdiff"] = (
+                G_grid_masked.nodes[u]["pos"] - G_grid_masked.nodes[v]["pos"]
             )
 
     # relabel nodes to integers (sorted)
     G_m2g_int = networkx.convert_node_labels_to_integers(
-        G_grid, first_label=0, ordering="sorted"
+        G_grid_masked, first_label=0, ordering="sorted"
     )
     pyg_m2g = from_networkx(G_m2g_int)
 
