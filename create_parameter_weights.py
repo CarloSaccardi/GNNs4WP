@@ -20,7 +20,7 @@ def main():
     parser.add_argument(
         "--dataset",
         type=str,
-        default="CERRA_interpolated",
+        default="ERA5/60_n2_40_18/2017",
         help="Dataset to compute weights for (default: meps_example)",
     )
     parser.add_argument(

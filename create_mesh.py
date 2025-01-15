@@ -311,13 +311,13 @@ def main():
     parser.add_argument(
         "--graph",
         type=str,
-        default="hierarchical_masked",
+        default="hierarchical_complete",
         help="Name to save graph as (default: multiscale)",
     )
     parser.add_argument(
         "--plot",
         type=int,
-        default=1,
+        default=0,
         help="If graphs should be plotted during generation "
         "(default: 0 (false))",
     )
@@ -338,6 +338,12 @@ def main():
         type=bool,
         default=False,
         help="Interpolate CERRA gird coordinates to ERA5 grid coordinates (default: False)",
+    )
+    parser.add_argument(
+        "--complete_graph",
+        type=bool,
+        default=True,
+        help="Create a complete graph with all nodes connected (default: False)",
     )
     args = parser.parse_args()
     
@@ -563,34 +569,43 @@ def main():
 
     # grid nodes
     Ny, Nx = xy_high.shape[1:]
-    G_grid, G_grid_masked = mk_2d_graph_with_masking(xy_high, Ny, Nx, 10, 50, seed=None)
+    #G_grid, G_grid_masked = mk_2d_graph_with_masking(xy_high, Ny, Nx, 10, 50, seed=None)
+
+    G_grid = networkx.grid_2d_graph(Ny, Nx)
+    G_grid.clear_edges()
     
     if args.plot:
-        plot_graph_nodes_only_2graph(from_networkx(G_grid_masked), from_networkx(G[0]), title=f"era5_CERRA")
+        plot_graph_nodes_only_2graph(from_networkx(G_grid), from_networkx(G[0]), title=f"era5_CERRA")
         plt.show()
         plt.savefig(f"era5_cerra.png")
         
         plot_graph_nodes_only(from_networkx(G_grid), title=f"Mesh graph, complete")
         plt.show()
         plt.savefig(f"complete_mesh.png")
+        
+    
+    # vg features (only pos introduced here)
+    for node in G_grid.nodes:
+        # pos is in feature but here explicit for convenience
+        G_grid.nodes[node]["pos"] = [xy_high[0][node], xy_high[1][node]]  # xy is already (Nx,Ny,2)    
     
     # add 1000 to node key to separate grid nodes (1000,i,j) from mesh nodes
     # (i,j) and impose sorting order such that vm are the first nodes
-    G_grid_masked = prepend_node_index(G_grid_masked, 1000)
+    G_grid = prepend_node_index(G_grid, 1000)
 
     # build kd tree for grid point pos
     # order in vg_list should be same as in vg_xy
-    vg_list = list(G_grid_masked.nodes)
-    vg_xy = np.array([[xy_high[0][node[1:]], xy_high[1][node[1:]]] for node in vg_list])
+    vg_list = list(G_grid.nodes)
+    vg_xy = np.array([[xy_high[0][node[1:]], xy_high[1][node[1:]]] for node in vg_list])#position of grid nodes
     kdt_g = scipy.spatial.KDTree(vg_xy)
 
     # now add (all) mesh nodes, include features (pos)
-    G_grid_masked.add_nodes_from(all_mesh_nodes)
+    G_grid.add_nodes_from(all_mesh_nodes)
 
     # Re-create graph with sorted node indices
     # Need to do sorting of nodes this way for indices to map correctly to pyg
     G_g2m = networkx.Graph()
-    G_g2m.add_nodes_from(sorted(G_grid_masked.nodes(data=True)))
+    G_g2m.add_nodes_from(sorted(G_grid.nodes(data=True)))
 
     # turn into directed graph
     G_g2m = networkx.DiGraph(G_g2m)
@@ -632,22 +647,22 @@ def main():
     # add edges from mesh to grid
     for v in vg_list:
         # find 4 nearest neighbours (index to vm_xy)
-        neigh_idxs = kdt_m.query(G_grid_masked.nodes[v]["pos"], 4)[1]
+        neigh_idxs = kdt_m.query(G_grid.nodes[v]["pos"], 4)[1]
         for i in neigh_idxs:
             u = vm_list[i]
             # add edge from mesh to grid
-            G_grid_masked.add_edge(u, v)
+            G_grid.add_edge(u, v)
             d = np.sqrt(
-                np.sum((G_grid_masked.nodes[u]["pos"] - G_grid_masked.nodes[v]["pos"]) ** 2)
+                np.sum((G_grid.nodes[u]["pos"] - G_grid.nodes[v]["pos"]) ** 2)
             )
-            G_grid_masked.edges[u, v]["len"] = d
-            G_grid_masked.edges[u, v]["vdiff"] = (
-                G_grid_masked.nodes[u]["pos"] - G_grid_masked.nodes[v]["pos"]
+            G_grid.edges[u, v]["len"] = d
+            G_grid.edges[u, v]["vdiff"] = (
+                G_grid.nodes[u]["pos"] - G_grid.nodes[v]["pos"]
             )
 
     # relabel nodes to integers (sorted)
     G_m2g_int = networkx.convert_node_labels_to_integers(
-        G_grid_masked, first_label=0, ordering="sorted"
+        G_grid, first_label=0, ordering="sorted"
     )
     pyg_m2g = from_networkx(G_m2g_int)
 

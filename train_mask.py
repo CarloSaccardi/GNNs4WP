@@ -10,10 +10,10 @@ from lightning_fabric.utilities import seed
 
 # First-party
 from neural_lam import constants, utils
-from neural_lam.models.graph_efm import GraphEFM
+from neural_lam.models.mask_efm import GraphEFM_mask
 from neural_lam.models.graph_fm import GraphFM
 from neural_lam.models.graphcast import GraphCast
-from neural_lam.weather_dataset import WeatherDataset, WeatherDatasetCERRA
+from neural_lam.weather_dataset import WeatherDataset, WeatherDatasetCERRA, ERA5toCERRA
 import os
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
@@ -21,7 +21,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 MODELS = {
     "graphcast": GraphCast,
     "graph_fm": GraphFM,
-    "graph_efm": GraphEFM,
+    "graph_efm": GraphEFM_mask,
 }
 
 
@@ -35,9 +35,16 @@ def main():
 
     # General options
     parser.add_argument(
-        "--dataset",
+        "--dataset_cerra",
         type=str,
-        default="CERRA",
+        default="CERRA_interpolated",
+        help="Dataset, corresponding to name in data directory "
+        "(default: meps_example)",
+    )
+    parser.add_argument(
+        "--dataset_era5",
+        type=str,
+        default="ERA5/60_n2_40_18/2017",
         help="Dataset, corresponding to name in data directory "
         "(default: meps_example)",
     )
@@ -70,7 +77,7 @@ def main():
         help="upper epoch limit (default: 200)",
     )
     parser.add_argument(
-        "--batch_size", type=int, default=1, help="batch size (default: 4)"
+        "--batch_size", type=int, default=16, help="batch size (default: 4)"
     )
     parser.add_argument(
         "--load",
@@ -95,7 +102,7 @@ def main():
     parser.add_argument(
         "--graph",
         type=str,
-        default="hierarchical",
+        default="hierarchical_complete",
         help="Graph to load and use in graph-based model "
         "(default: multiscale)",
     )
@@ -278,11 +285,10 @@ def main():
 
     # Load data
     train_loader = torch.utils.data.DataLoader(
-        WeatherDatasetCERRA(
-            args.dataset,
-            pred_length=args.ar_steps,
+        ERA5toCERRA(
+            args.dataset_cerra,
+            args.dataset_era5,
             split="train",
-            subsample_step=args.step_length,
             subset=bool(args.subset_ds),
             control_only=args.control_only,
         ),
@@ -293,12 +299,11 @@ def main():
     max_pred_length = (65 // args.step_length) - 2  # 19
     
     val_loader = torch.utils.data.DataLoader(
-        WeatherDatasetCERRA(
-            args.dataset,
-            pred_length=max_pred_length,
+        ERA5toCERRA(
+            args.dataset_cerra,
+            args.dataset_era5,
             split="val",
-            subsample_step=args.step_length,
-            subset=True,
+            subset=False,
             control_only=args.control_only,
         ),
         args.batch_size,
@@ -408,7 +413,7 @@ def main():
             model=model,
             train_dataloaders=train_loader,
             val_dataloaders=val_loader,
- 
+            
         )
 
 

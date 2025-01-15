@@ -12,7 +12,45 @@ import logging
 import pathlib
 
 
-def PRES_to_npy(data_folder="/aspire/CarloData/CERRA/2019", output_folder="/aspire/CarloData/samples"):
+
+
+
+
+def interpolate_xr(cerra_path, era5_path, output_folder):
+    """
+    Interpolate the CERRA data to the ERA5 grid.
+    
+    Parameters:
+    - cerra_path (xr.Dataset): CERRA dataset to interpolate.
+    - era5_path (xr.Dataset): ERA5 dataset to interpolate to.
+    
+    Returns:
+    - xr.Dataset: Interpolated CERRA dataset.
+    """
+    # Create a list of all _PRES.grb files in the 2020 folder
+    file_pattern = os.path.join(cerra_path, '*_PRES.grb')
+    files = sorted(glob(file_pattern))
+
+    os.makedirs(output_folder, exist_ok=True)
+    
+    f = pathlib.Path(era5_path)
+    ds = xr.open_dataset(f)
+
+    # Loop through each file
+    for file_path in files:
+        #load cerra as xr array
+        cerra_sample = xr.open_dataset(file_path, engine='cfgrib')
+        
+        #load era5 as xr array
+        f = pathlib.Path(era5_path)
+        ds = xr.open_dataset(f)
+        
+        cerrasample_interp = cerra_sample.interp_like(ds)
+    
+
+
+
+def PRES_to_npy(data_folder="/aspire/CarloData/CERRA/2017", output_folder="/aspire/CarloData/CERRA_interpolated/2017"):
     """
     data_folder: str - The folder containing the _PRES.grb files
     output_folder: str - The folder to save the .npy files
@@ -258,7 +296,9 @@ class CERRA():
                 np.save(output_path, resized_array)
                 logging.info(f"Resized and saved {filename} to {output_path}")
                 
-    def LatLon_to_LambertProj(self, filename: str = "nwp_xy_base.npy", folder: str = "static", plot: bool = False):
+                                        
+                
+    def LatLon_to_LambertProj(self, filename: str = "nwp_xy_interpolated.npy", folder: str = "static", interpolate_to_ERA5: bool=True, plot: bool = False):
         """
         Convert latitude and longitude coordinates to Lambert Conformal projection coordinates.
 
@@ -284,25 +324,29 @@ class CERRA():
         #mycrs = f"+proj=lcc +lat_0={pp.lat_0} +lon_0={pp.lon_0} +lat_1={pp.lat_1} +lat_2={pp.lat_2} +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
 
         #crstrans = Transformer.from_crs("EPSG:4326", mycrs, always_xy=True)
-        #x, y = crstrans.transform(lon, lat)
+        #lon, lat = crstrans.transform(lon, lat)
+
 
         xy = np.array([lon, lat]) # shape = (2, n_lon, n_lat)
-        original_size = self.default_grid_size
-        start_idx = (original_size - self.grid_size) // 2
-        end_idx = start_idx + self.grid_size
-        
-        #xy = xy[:, start_idx:end_idx, start_idx:end_idx]
+        if self.grid_size != self.default_grid_size:
+            original_size = self.default_grid_size
+            start_idx = (original_size - self.grid_size) // 2
+            end_idx = start_idx + self.grid_size
+            
+            
+            xy = xy[:, start_idx:end_idx, start_idx:end_idx]
         
         np.save(os.path.join(save_dir, filename), xy)
         
         if plot:
             plt.figure(figsize=(10, 8))
-            plt.scatter(x, y, s=1, color='blue', alpha=0.5)
+            plt.scatter(xy[0], xy[1], s=1, color='blue', alpha=0.5)
             plt.xlabel("X Coordinates")
             plt.ylabel("Y Coordinates")
             plt.grid(True)
             plt.show()
-            plt.savefig('grid_representationWRONG.png')
+            plt.savefig('grid_representation.png')
+            
         
         
     def get_topography(self, folder: str, filename: str):
@@ -316,7 +360,8 @@ class CERRA():
         save_dir = self.ensure_dir(os.path.join(self.npy_samples_path_out, folder, filename))
         
         try:
-            surface_data = cfgrib.open_datasets(path)
+            #surface_data = cfgrib.open_datasets(path)
+            surface_data = xr.open_dataset(self.original_grb_path, engine='cfgrib')
             surface_geopotential = surface_data[-1]["orog"].values
             np.save(save_dir, surface_geopotential)
             logging.info(f"Topography data saved to {save_dir}")
@@ -344,7 +389,12 @@ class CERRA():
         logging.info(f"Border mask saved to {os.path.join(save_dir, filename)}")
         
         
-    def create_dataset(self, samples_folder: str = "samples", static_folder: str = "static", border_width: int = 10, plot: bool = False):
+    def create_dataset(self, 
+                       samples_folder: str = "samples", 
+                       static_folder: str = "static", 
+                       border_width: int = 10, 
+                       plot: bool = False,
+                       interpolate_to_ERA5: bool = False):
         """
         Create the pre-processed dataset by orchestrating the individual steps.
         Parameters:
@@ -358,8 +408,9 @@ class CERRA():
         #self.resize(folder=samples_folder)
 
         # Step 2: Generate Lambert projection static file
-        logging.info("Generating Lambert projection static file...")
-        self.LatLon_to_LambertProj(folder=static_folder, plot=plot)
+        #self.interpolate(folder=static_folder, interpolate_to_ERA5=interpolate_to_ERA5, plot=plot)
+        #logging.info("Generating Lambert projection static file...")
+        #self.LatLon_to_LambertProj(folder=static_folder, interpolate_to_ERA5=interpolate_to_ERA5, plot=plot)
 
         # Step 3: Get topography data
         logging.info("Extracting topography...")
@@ -368,7 +419,7 @@ class CERRA():
 
         # Step 4: Create border mask
         logging.info("Creating border mask...")
-        self.create_border_mask(border_width=border_width, folder=static_folder)
+        #self.create_border_mask(border_width=border_width, folder=static_folder)
 
         logging.info("Dataset creation complete.")
 
@@ -376,24 +427,30 @@ class CERRA():
         
     
 if __name__ == "__main__":
-    """
-    cerra = CERRA(grid_size=90, 
-                  npy_samples_path_in="/aspire/CarloData/ERA5/2017/samples_2017", 
-                  npy_samples_path_out="data/ERA5/2017/samples_60x60", 
-                  original_grb_path="/aspire/CarloData/ERA5/2017/data_stream-oper_stepType-instant.nc",
-                  default_grid_size=175)
     
-    """
     cerra = CERRA(grid_size=300, 
-                  npy_samples_path_in="/aspire/CarloData/samples", 
-                  npy_samples_path_out="data/CERRA", 
-                  original_grb_path="/aspire/CarloData/CERRA/2017/CERRA_2017_01_01-00_PRES.grb",
-                  default_grid_size=1069)
+                  npy_samples_path_in="data/CERRA_interpolated/samples", 
+                  npy_samples_path_out="data/CERRA_interpolated", 
+                  original_grb_path="/aspire/CarloData/CERRA_interpolated/2017/PRES/CERRA_2017_01_01-00_PRES.grb",
+                  default_grid_size=300)
     
+    """
+    cerra = CERRA(grid_size=81, 
+                  npy_samples_path_in="data/ERA5/60_n2_40_18/2017/samples", 
+                  npy_samples_path_out="data/ERA5/60_n2_40_18/2017", 
+                  original_grb_path="/aspire/CarloData/ERA5/60_n2_40_18/2017/data_stream-oper_stepType-instant.nc",
+                  default_grid_size=81)
+    """
     
     cerra.create_dataset(samples_folder="samples", 
                          static_folder="static", 
                          border_width=10, 
-                         plot=False)
+                         plot=True,
+                         interpolate_to_ERA5=True)
+                         
+    
+    
+    
+    
     
     

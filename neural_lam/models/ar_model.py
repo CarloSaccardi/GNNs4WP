@@ -27,7 +27,7 @@ class ARModel(pl.LightningModule):
         self.lr = args.lr
 
         # Load static features for grid/data
-        static_data_dict = utils.load_static_data(args.dataset)
+        static_data_dict = utils.load_static_data(args.dataset_cerra)
         for static_data_name, static_data_tensor in static_data_dict.items():
             self.register_buffer(
                 static_data_name, static_data_tensor, persistent=False
@@ -59,9 +59,10 @@ class ARModel(pl.LightningModule):
             grid_static_dim,
         ) = self.grid_static_features.shape  # 63784 = 268x238
         self.grid_dim = (
-            2 * constants.GRID_STATE_DIM_CERRA
+            #2 * constants.GRID_STATE_DIM_CERRA
+            constants.GRID_STATE_DIM_CERRA
             + grid_static_dim
-            + constants.GRID_FORCING_DIM_CERRA
+            #+ constants.GRID_FORCING_DIM_CERRA
         )
 
         # Instantiate loss function

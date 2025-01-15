@@ -58,7 +58,7 @@ class BaseGraphLatentDecoder(nn.Module):
         """
         raise NotImplementedError("combine_with_latent not implemented")
 
-    def forward(self, grid_rep, latent_samples, last_state, graph_emb):
+    def forward(self, grid_rep, latent_samples, graph_emb):
         """
         Compute prediction (mean and std.-dev.) of next weather state
 
@@ -100,6 +100,7 @@ class BaseGraphLatentDecoder(nn.Module):
             mean_delta = state_params  # (B, num_grid_nodes, d_state)
             pred_std = None
 
-        pred_mean = last_state + mean_delta
+        #pred_mean = last_state + mean_delta
+        pred_mean = mean_delta
 
         return pred_mean, pred_std
