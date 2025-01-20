@@ -161,29 +161,12 @@ def plot_ensemble_prediction(
     )
     plot_on_axis(
         axes[1],
-        ens_mean,
+        samples,
         alpha=pixel_alpha,
         vmin=vmin,
         vmax=vmax,
         ax_title="Ens. Mean",
     )
-    std_im = plot_on_axis(
-        axes[2], ens_std, alpha=pixel_alpha, ax_title="Ens. Std."
-    )  # Own vrange
-
-    # Plot samples
-    for member_i, (ax, member) in enumerate(
-        zip(axes[3:], samples[:6]), start=1
-    ):
-        plot_on_axis(
-            ax,
-            member,
-            alpha=pixel_alpha,
-            vmin=vmin,
-            vmax=vmax,
-            ax_title=f"Member {member_i}",
-        )
-
     # Turn off unused axes
     for ax in axes[(3 + samples.shape[0]) :]:
         ax.axis("off")
@@ -193,8 +176,8 @@ def plot_ensemble_prediction(
         gt_im, ax=axes[:2], aspect=60, location="bottom", shrink=0.9
     )
     values_cbar.ax.tick_params(labelsize=10)
-    std_cbar = fig.colorbar(std_im, aspect=30, location="bottom", shrink=0.9)
-    std_cbar.ax.tick_params(labelsize=10)
+    #std_cbar = fig.colorbar(std_im, aspect=30, location="bottom", shrink=0.9)
+    #std_cbar.ax.tick_params(labelsize=10)
 
     if title:
         fig.suptitle(title, size=20)

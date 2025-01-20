@@ -544,7 +544,9 @@ def main():
     save_edges_list(m2m_graphs, "m2m", graph_dir_path)
 
     # Divide mesh node pos by max coordinate of grid cell
-    mesh_pos = [pos / pos_max_low for pos in mesh_pos]
+    #replace first mesh features with features of era5 gird. 
+    #this is necessary since the first layer mesh is not really a mesh but is the actual data coming from era5 dataset.
+    #mesh_pos = [torch.load("data/ERA5/60_n2_40_18/2017/static/grid_features.pt")] + [pos / pos_max_low for pos in mesh_pos[1:]]
 
     # Save mesh positions
     torch.save(
@@ -584,11 +586,11 @@ def main():
         plt.savefig(f"complete_mesh.png")
         
     
-    # vg features (only pos introduced here)
+        # vg features (only pos introduced here)
     for node in G_grid.nodes:
         # pos is in feature but here explicit for convenience
-        G_grid.nodes[node]["pos"] = [xy_high[0][node], xy_high[1][node]]  # xy is already (Nx,Ny,2)    
-    
+        G_grid.nodes[node]["pos"] = np.array([xy_high[0][node], xy_high[1][node]])
+
     # add 1000 to node key to separate grid nodes (1000,i,j) from mesh nodes
     # (i,j) and impose sorting order such that vm are the first nodes
     G_grid = prepend_node_index(G_grid, 1000)
@@ -596,7 +598,7 @@ def main():
     # build kd tree for grid point pos
     # order in vg_list should be same as in vg_xy
     vg_list = list(G_grid.nodes)
-    vg_xy = np.array([[xy_high[0][node[1:]], xy_high[1][node[1:]]] for node in vg_list])#position of grid nodes
+    vg_xy = np.array([[xy_high[0][node[1:]], xy_high[1][node[1:]]] for node in vg_list])
     kdt_g = scipy.spatial.KDTree(vg_xy)
 
     # now add (all) mesh nodes, include features (pos)
@@ -629,15 +631,16 @@ def main():
     pyg_g2m = from_networkx(G_g2m)
 
     if args.plot:
-        #save figure
         plot_graph(pyg_g2m, title="Grid-to-mesh")
         plt.show()
-        plt.savefig("grid_to_mesh.png")
-        
 
     #
     # Mesh2Grid
     #
+
+    # start out from Grid2Mesh and then replace edges
+    G_m2g = G_g2m.copy()
+    G_m2g.clear_edges()
 
     # build kd tree for mesh point pos
     # order in vm should be same as in vm_xy
@@ -647,36 +650,34 @@ def main():
     # add edges from mesh to grid
     for v in vg_list:
         # find 4 nearest neighbours (index to vm_xy)
-        neigh_idxs = kdt_m.query(G_grid.nodes[v]["pos"], 4)[1]
+        neigh_idxs = kdt_m.query(G_m2g.nodes[v]["pos"], 4)[1]
         for i in neigh_idxs:
             u = vm_list[i]
             # add edge from mesh to grid
-            G_grid.add_edge(u, v)
+            G_m2g.add_edge(u, v)
             d = np.sqrt(
-                np.sum((G_grid.nodes[u]["pos"] - G_grid.nodes[v]["pos"]) ** 2)
+                np.sum((G_m2g.nodes[u]["pos"] - G_m2g.nodes[v]["pos"]) ** 2)
             )
-            G_grid.edges[u, v]["len"] = d
-            G_grid.edges[u, v]["vdiff"] = (
-                G_grid.nodes[u]["pos"] - G_grid.nodes[v]["pos"]
+            G_m2g.edges[u, v]["len"] = d
+            G_m2g.edges[u, v]["vdiff"] = (
+                G_m2g.nodes[u]["pos"] - G_m2g.nodes[v]["pos"]
             )
 
     # relabel nodes to integers (sorted)
     G_m2g_int = networkx.convert_node_labels_to_integers(
-        G_grid, first_label=0, ordering="sorted"
+        G_m2g, first_label=0, ordering="sorted"
     )
     pyg_m2g = from_networkx(G_m2g_int)
 
     if args.plot:
         plot_graph(pyg_m2g, title="Mesh-to-grid")
         plt.show()
-        plt.savefig("mesh_to_grid.png")
 
     # Save g2m and m2g everything
     # g2m
     save_edges(pyg_g2m, "g2m", graph_dir_path)
     # m2g
     save_edges(pyg_m2g, "m2g", graph_dir_path)
-
 
 if __name__ == "__main__":
     main()

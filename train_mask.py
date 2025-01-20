@@ -16,7 +16,7 @@ from neural_lam.models.graphcast import GraphCast
 from neural_lam.weather_dataset import WeatherDataset, WeatherDatasetCERRA, ERA5toCERRA
 import os
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2,4,5"
 
 MODELS = {
     "graphcast": GraphCast,
@@ -77,7 +77,7 @@ def main():
         help="upper epoch limit (default: 200)",
     )
     parser.add_argument(
-        "--batch_size", type=int, default=16, help="batch size (default: 4)"
+        "--batch_size", type=int, default=8, help="batch size (default: 4)"
     )
     parser.add_argument(
         "--load",
@@ -200,7 +200,7 @@ def main():
     parser.add_argument(
         "--loss",
         type=str,
-        default="wmse",
+        default="mse",
         help="Loss function to use, see metric.py (default: wmse)",
     )
     parser.add_argument(
@@ -302,7 +302,7 @@ def main():
         ERA5toCERRA(
             args.dataset_cerra,
             args.dataset_era5,
-            split="val",
+            split="train",#TODO: Change to val
             subset=False,
             control_only=args.control_only,
         ),
@@ -351,6 +351,8 @@ def main():
         )
     )
     # Save checkpoints for minimum loss at specific lead times
+    """
+    this was needed to load val_loss_unroll1, val_loss_unroll3, but since we are not doing video pred anumore, we can remove this
     for unroll_time in constants.VAL_STEP_CHECKPOINTS:
         metric_name = f"val_loss_unroll{unroll_time}"
         callbacks.append(
@@ -361,6 +363,8 @@ def main():
                 mode="min",
             )
         )
+        
+    """
     logger = pl.loggers.WandbLogger(
         project=constants.WANDB_PROJECT, name=run_name, config=args
     )

@@ -21,6 +21,13 @@ class GraphEFM_mask(ARModel):
 
     def __init__(self, args):
         super().__init__(args)
+        assert (
+            args.n_example_pred <= args.batch_size
+        ), "Can not plot more examples than batch size in GraphEFM"
+        self.sample_obs_noise = bool(args.sample_obs_noise)
+        self.ensemble_size = args.ensemble_size
+        self.kl_beta = args.kl_beta
+        self.crps_weight = args.crps_weight
 
 
         # Load graph with static features
@@ -34,19 +41,25 @@ class GraphEFM_mask(ARModel):
 
         # Specify dimensions of data
         # grid_dim from data + static
-        grid_current_dim = self.grid_dim + constants.GRID_STATE_DIM_CERRA
+        #grid_current_dim = self.grid_dim + constants.GRID_STATE_DIM_CERRA
+        
         g2m_dim = self.g2m_features.shape[1]
         m2g_dim = self.m2g_features.shape[1]
 
         # Define sub-models
         # Feature embedders for grid
         self.mlp_blueprint_end = [args.hidden_dim] * (args.hidden_layers + 1)
-        self.grid_prev_embedder = utils.make_mlp(
+        self.high_res_embedder = utils.make_mlp(
             [self.grid_dim] + self.mlp_blueprint_end
         )  # For states up to t-1
-        self.grid_current_embedder = utils.make_mlp(
-            [grid_current_dim] + self.mlp_blueprint_end
-        )  # For states including t
+
+        self.low_res_embedder = utils.make_mlp(
+            [self.grid_dim] + self.mlp_blueprint_end
+        )
+
+        #self.grid_current_embedder = utils.make_mlp(
+        #    [grid_current_dim] + self.mlp_blueprint_end
+        #)  # For states including t
         # Embedders for mesh
         self.g2m_embedder = utils.make_mlp([g2m_dim] + self.mlp_blueprint_end)
         self.m2g_embedder = utils.make_mlp([m2g_dim] + self.mlp_blueprint_end)
@@ -56,7 +69,7 @@ class GraphEFM_mask(ARModel):
             level_mesh_sizes = [
                 mesh_feat.shape[0] for mesh_feat in self.mesh_static_features
             ]
-            self.num_mesh_nodes = level_mesh_sizes[-1]
+            self.num_mesh_nodes = level_mesh_sizes[-1]#is this right? shouldn't it be the sum of all the mesh nodes?
             num_levels = len(self.mesh_static_features)
             for level_index, level_mesh_size in enumerate(level_mesh_sizes):
                 same_level_edges = self.m2m_features[level_index].shape[0]
@@ -72,16 +85,16 @@ class GraphEFM_mask(ARModel):
                     print(f" - {up_edges} up edges, {down_edges} down edges")
             # Embedders
             # Assume all levels have same static feature dimensionality
-            mesh_dim = self.mesh_static_features[0].shape[1]
+            mesh_dim = self.mesh_static_features[1].shape[1] #first mesh features has shape (6561, 4) since it represent the era5 grid. The other meshes have shape (x, 2). There is a dedicated ambedder for the first mesh. This code should be modified to take into account the different shapes of the mesh features.
             m2m_dim = self.m2m_features[0].shape[1]
             mesh_up_dim = self.mesh_up_features[0].shape[1]
             mesh_down_dim = self.mesh_down_features[0].shape[1]
 
             # Separate mesh node embedders for each level
-            self.mesh_embedders = torch.nn.ModuleList(
+            self.mesh_embedders = torch.nn.ModuleList( [self.low_res_embedder] +
                 [
                     utils.make_mlp([mesh_dim] + self.mlp_blueprint_end)
-                    for _ in range(num_levels)
+                    for _ in range(num_levels-1)
                 ]
             )
             self.mesh_up_embedders = torch.nn.ModuleList(
@@ -228,46 +241,6 @@ class GraphEFM_mask(ARModel):
             }
         )
 
-
-
-
-
-    def embedd_current(
-        self,
-        prev_state,
-        prev_prev_state,
-        forcing,
-        current_state,
-    ):
-        """
-        embed grid representation including current (target) state. Used as
-        input to the encoder, which is conditioned also on the target.
-
-        prev_state: (B, num_grid_nodes, feature_dim), X_t
-        prev_prev_state: (B, num_grid_nodes, feature_dim), X_{t-1}
-        forcing: (B, num_grid_nodes, forcing_dim)
-        current_state: (B, num_grid_nodes, feature_dim), X_{t+1}
-
-        Returns:
-        current_emb: (B, num_grid_nodes, d_h)
-        """
-        batch_size = prev_state.shape[0]
-
-        grid_current_features = torch.cat(
-            (
-                prev_prev_state,
-                prev_state,
-                forcing,
-                self.expand_to_batch(self.grid_static_features, batch_size),
-                current_state,
-            ),
-            dim=-1,
-        )  # (B, num_grid_nodes, grid_current_dim)
-
-        return self.grid_current_embedder(
-            grid_current_features
-        )  # (B, num_grid_nodes, d_h)
-
     def embedd_all(self, high_res, low_res):
         """
         embed all node and edge representations
@@ -290,7 +263,7 @@ class GraphEFM_mask(ARModel):
             dim=-1,
         )  # (B, num_grid_nodes, grid_dim)
 
-        grid_emb = self.grid_prev_embedder(high_res_grid_features)
+        grid_emb = self.high_res_embedder(high_res_grid_features)
         # (B, num_grid_nodes, d_h)
 
         # Graph embedding
@@ -304,13 +277,30 @@ class GraphEFM_mask(ARModel):
         }
 
         if self.hierarchical_graph:
-            graph_emb["mesh"] = [
-                self.expand_to_batch(emb(node_static_features), batch_size)
-                for emb, node_static_features in zip(
-                    self.mesh_embedders,
-                    self.mesh_static_features,
-                )
-            ]  # each (B, num_mesh_nodes[l], d_h)
+            
+            graph_emb["mesh"] = []
+            for indx, (emb, node_static_features) in enumerate(zip(self.mesh_embedders, self.mesh_static_features)):
+                
+                if indx == 0:
+                    #embed low_res grid with era5 data, just as the high_res grid
+                    low_res_grid_features = torch.cat(
+                        (
+                            low_res,
+                            self.expand_to_batch(node_static_features, batch_size),
+                        ),
+                        dim=-1,
+                    )  # (B, num_mesh_nodes, mesh_dim)
+                    
+                    graph_emb["mesh"].append(emb(low_res_grid_features)) 
+                    
+                else:
+
+                    graph_emb["mesh"].append(self.expand_to_batch(emb(node_static_features), batch_size))
+                
+                
+                
+                #self.expand_to_batch(emb(node_static_features), batch_size)
+            
 
             if self.embedd_m2m:
                 graph_emb["m2m"] = [
@@ -371,7 +361,7 @@ class GraphEFM_mask(ARModel):
 
         # Compute likelihood
         likelihood_term, pred_mean, pred_std = self.estimate_likelihood(
-            var_dist, high_res_grid_emb, graph_emb
+            var_dist, high_res, high_res_grid_emb, graph_emb
         )
         if self.kl_beta > 0:
             # Compute prior
@@ -392,7 +382,7 @@ class GraphEFM_mask(ARModel):
     
     
     def estimate_likelihood(
-        self, latent_dist, grid_prev_emb, graph_emb
+        self, latent_dist, high_res_grid, grid_prev_emb, graph_emb
     ):
         """
         Estimate (masked) likelihood using given distribution over
@@ -430,6 +420,7 @@ class GraphEFM_mask(ARModel):
         # and large values
         entry_likelihoods = -self.loss(
             pred_mean,
+            high_res_grid,
             pred_std,
             mask=self.interior_mask_bool,
             average_grid=False,
@@ -451,11 +442,13 @@ class GraphEFM_mask(ARModel):
         """
         cerra, era5 = batch
         
-        binary_mask_tensor, mask_idx = self.random_masking(cerra, mask_ratio=0.5)
+
+        binary_mask_tensor, mask_idx = self.random_masking(cerra, mask_ratio=0.5, subgrid_size=50)
         #self.plot_binary_mask(binary_mask_tensor)
-        binary_mask_tensor = binary_mask_tensor.flatten()
+        binary_mask_tensor = binary_mask_tensor.flatten()#shape [90000]
         
         #mask 
+        cerra = cerra * binary_mask_tensor.unsqueeze(1)
         self.grid_static_features = self.grid_static_features * binary_mask_tensor.unsqueeze(1)
         #re-index mask_idx tensor: the indexes of the grid nodes reported in self.g2m_edge_index and self.g2m_features
         #are integers that start from 7371 (in the specifics og the current experiment settings).  This is beacsue we are 
@@ -467,17 +460,40 @@ class GraphEFM_mask(ARModel):
         mask_idx_edges = mask_idx + self.g2m_edge_index[0,0]#self.g2m_edge_index[0,0] -1 = 7371
         edge_index_to_mask = torch.nonzero(torch.isin(self.g2m_edge_index, mask_idx_edges)[0], as_tuple=False).unique()
         self.g2m_features[edge_index_to_mask] = 0
+    
         
-        loss_like_term, loss_kl_term, pred_mean, pred_std = (
+        loss_like_term, loss_kl_term, _, _ = (
                 self.compute_step_loss(
                     cerra,
                     era5,
                 )
             )
         
-        
+        mean_likelihood = torch.mean(loss_like_term)
+        log_dict = {
+            "elbo_likelihood": mean_likelihood,
+        }
 
-    def random_masking(self, cerra, mask_ratio):
+        if self.kl_beta > 0:
+            # Only compute full KL + ELBO if beta > 0
+            mean_kl = torch.mean(loss_kl_term)
+            elbo = mean_likelihood - mean_kl
+            loss = -mean_likelihood + self.kl_beta * mean_kl
+
+            log_dict["elbo"] = elbo
+            log_dict["elbo_kl"] = mean_kl
+        else:
+            # Pure auto-encoder training
+            loss = -mean_likelihood
+
+        log_dict["train_loss"] = loss
+        self.log_dict(
+            log_dict, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True
+        )
+        return loss
+             
+
+    def random_masking(self, cerra, mask_ratio, subgrid_size):
         """
         Randomly mask some variables at random lead times.
 
@@ -492,7 +508,6 @@ class GraphEFM_mask(ARModel):
         grid_size = int(cerra.shape[1] ** 0.5)
 
         # Define subgrid size
-        subgrid_size = 10
         num_subgrids_per_row = grid_size // subgrid_size
         num_subgrids = num_subgrids_per_row ** 2
 
@@ -538,10 +553,125 @@ class GraphEFM_mask(ARModel):
         plt.ylabel("Grid Y")
         plt.show()
         plt.savefig("mask_visualization.png")
-
-
         
+
+    def validation_step(self, batch, *args):
+        """
+        Run validation on single batch
+        """
         
+        high_res, low_res = batch
+        prediction, pred_std = self.predict_step(high_res, low_res)
+        
+        target = high_res 
+
+        mean_loss = torch.mean(
+            self.loss(
+                prediction, target, pred_std, mask=self.interior_mask_bool
+            ),
+            dim=0,
+        )  # (time_steps-1)
+
+        # Log loss per time step forward and mean
+        val_log_dict = {}
+        val_log_dict["val_mean_loss"] = mean_loss
+        self.log_dict(
+            val_log_dict, on_step=False, on_epoch=True, sync_dist=True
+        )
+
+        # Store MSEs
+        entry_mses = metrics.mse(
+            prediction,
+            target,
+            pred_std,
+            mask=self.interior_mask_bool,
+            sum_vars=False,
+        )  # (B, pred_steps, d_f)
+        self.val_metrics["mse"].append(entry_mses)
+        batch_idx = args[0]
+
+        # Plot some example predictions using prior and encoder
+        if (
+            self.trainer.is_global_zero
+            and batch_idx == 0
+            and self.n_example_pred > 0
+        ):
+
+            # Plot samples
+            log_plot_dict = {}
+
+            for var_i, _ in constants.VAL_PLOT_VARS_CERRA.items():
+                var_name = constants.PARAM_NAMES_SHORT_CERRA[var_i]
+                var_unit = constants.PARAM_UNITS_CERRA[var_i]
+
+                pred_states = prediction[
+                    batch_idx, :, var_i
+                ]  # (S, num_grid_nodes)
+                
+                target_state = target[
+                    batch_idx, :, var_i
+                ]  # (num_grid_nodes,)
+
+                plot_title = (
+                    f"{var_name} ({var_unit})"
+                )
+
+                # Make plots
+                diomerda=1
+                log_plot_dict[
+                    f"pred_{var_name}"
+                ] = vis.plot_ensemble_prediction(
+                    pred_states,
+                    target_state,
+                    pred_states.mean(dim=0),
+                    pred_states.std(dim=0),
+                    self.interior_mask[:, 0],
+                    title=f"{plot_title} (prior)",
+                )
+
+            if not self.trainer.sanity_checking:
+                # Log all plots to wandb
+                wandb.log(log_plot_dict)
+
+            plt.close("all")       
+            
+            
+            
+    def predict_step(self, prev_state, prev_prev_state):
+        """
+        Sample one time step prediction
+
+        prev_state: (B, num_grid_nodes, feature_dim), X_t
+        prev_prev_state: (B, num_grid_nodes, feature_dim), X_{t-1}
+        forcing: (B, num_grid_nodes, forcing_dim)
+
+        Returns:
+        new_state: (B, num_grid_nodes, feature_dim)
+        """
+        # embed all features
+        grid_prev_emb, graph_emb = self.embedd_all(
+            prev_state, prev_prev_state
+        )
+
+        # Compute prior
+        prior_dist = self.prior_model(
+            grid_prev_emb, graph_emb=graph_emb
+        )  # (B, num_mesh_nodes, d_latent)
+
+        # Sample from prior
+        latent_samples = prior_dist.rsample()
+        # (B, num_mesh_nodes, d_latent)
+
+        # Compute reconstruction (decoder)
+        pred_mean, pred_std = self.decoder(
+            grid_prev_emb, latent_samples, graph_emb
+        )  # (B, num_grid_nodes, d_state)
+
+        return pred_mean, pred_std
+            
+            
+    
+
         
         
         
