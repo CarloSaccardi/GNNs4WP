@@ -85,7 +85,7 @@ class HiGraphLatentEncoder(BaseLatentEncoder):
         parameters: (B, num_mesh_nodes, d_output)
         """
         current_mesh_rep = self.g2m_gnn(
-            grid_rep, graph_emb["mesh"][0], graph_emb["g2m"]
+            grid_rep, graph_emb["mesh"][0], graph_emb["g2m"], graph_emb["g2m_edge_index"]
         )  # (B, N_mesh, d_h)
 
         # Run same level processing on level 0

@@ -88,8 +88,8 @@ class ARModel(pl.LightningModule):
         self.opt_state = None
 
         # For example plotting
-        self.n_example_pred = args.n_example_pred
-        self.plotted_examples = 0
+        #self.n_example_pred = args.n_example_pred
+        #self.plotted_examples = 0
 
         # For storing spatial loss maps during evaluation
         self.spatial_loss_maps = []

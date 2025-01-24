@@ -16,7 +16,7 @@ from neural_lam.models.graphcast import GraphCast
 from neural_lam.weather_dataset import WeatherDataset, WeatherDatasetCERRA, ERA5toCERRA
 import os
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "2,4,5"
+os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
 MODELS = {
     "graphcast": GraphCast,
