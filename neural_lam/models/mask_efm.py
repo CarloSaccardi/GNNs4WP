@@ -28,8 +28,8 @@ class GraphEFM_mask(ARModel):
         ), "Can not plot more examples than batch size in GraphEFM"
         #self.sample_obs_noise = bool(args.sample_obs_noise)
         #self.ensemble_size = args.ensemble_size
-        self.kl_beta = args.kl_beta
-        self.crps_weight = args.crps_weight
+        #self.kl_beta = args.kl_beta
+        #self.crps_weight = args.crps_weight
 
 
         # Load graph with static features
@@ -149,6 +149,7 @@ class GraphEFM_mask(ARModel):
             args.latent_dim if args.latent_dim is not None else args.hidden_dim
         )
         # Prior
+        """
         if args.learn_prior:
             if self.hierarchical_graph:
                 self.prior_model = HiGraphLatentEncoder(
@@ -177,7 +178,7 @@ class GraphEFM_mask(ARModel):
                 self.num_mesh_nodes,
                 output_dist=args.prior_dist,
             )
-
+        """
         # Enc. + Dec.
         if self.hierarchical_graph:
             # Encoder
@@ -423,7 +424,6 @@ class GraphEFM_mask(ARModel):
             index 1 of prev_states
         """
         # embed all features
-        B, _, _ = high_res.shape
         high_res_grid_emb, graph_emb, mask, ids_restore = self.embedd_all(high_res,low_res, mask_ratio)
         
         # Compute variational approximation (encoder)
@@ -433,8 +433,9 @@ class GraphEFM_mask(ARModel):
 
         # Compute likelihood
         likelihood_term, pred_mean, pred_std = self.estimate_likelihood(
-            var_dist, high_res, high_res_grid_emb, graph_emb, ids_restore
+            var_dist, high_res, high_res_grid_emb, graph_emb, ids_restore, mask
         )
+        """
         if self.kl_beta > 0:
             # Compute prior
             prior_dist = self.prior_model(
@@ -449,12 +450,13 @@ class GraphEFM_mask(ARModel):
         else:
             # If beta=0, do not need to even compute prior nor KL
             kl_term = None  # Set to None to crash if erroneously used
+        """
 
-        return likelihood_term, kl_term, pred_mean, pred_std
+        return likelihood_term, pred_mean, pred_std
     
     
     def estimate_likelihood(
-        self, latent_dist, high_res_grid, grid_prev_emb, graph_emb, ids_restore
+        self, latent_dist, high_res_grid, high_res_emb, graph_emb, ids_restore, mask
     ):
         """
         Estimate (masked) likelihood using given distribution over
@@ -463,7 +465,7 @@ class GraphEFM_mask(ARModel):
         latent_dist: distribution, (B, num_mesh_nodes, d_latent)
         current_state: (B, num_grid_nodes, d_state)
         last_state: (B, num_grid_nodes, d_state)
-        grid_prev_emb: (B, num_grid_nodes, d_state)
+        high_res_emb: (B, num_grid_nodes, d_state)
         g2m_emb: (B, M_g2m, d_h)
         m2m_emb: (B, M_m2m, d_h)
         m2g_emb: (B, M_m2g, d_h)
@@ -475,18 +477,17 @@ class GraphEFM_mask(ARModel):
         """
         # Sample from variational distribution
         latent_samples = latent_dist.rsample()  # (B, num_mesh_nodes, d_latent)
-        
-        """
-        mask_tokens = self.mask_token.repeat(latent_samples.shape[0], ids_restore.shape[1] + 1 - latent_samples.shape[1], 1)
-        x_ = torch.cat([latent_samples, mask_tokens], dim=1)
-        x_ = torch.gather(x_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, latent_samples.shape[2]))  # unshuffle
-        latent_samples = x_ + self.decoder_pos_embed
-        """
 
-        graph_emb["g2m_edge_index"] = None
+        #graph_emb["g2m_edge_index"] = None
         # Compute reconstruction (decoder)
+        
+        mask_tokens = self.mask_token.repeat(high_res_emb.shape[0], ids_restore.shape[1] + 1 - high_res_emb.shape[1], 1)
+        x_ = torch.cat([high_res_emb, mask_tokens], dim=1)
+        x_ = torch.gather(x_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, high_res_emb.shape[2]))  # unshuffle
+        full_grid_rep = x_ + self.decoder_pos_embed
+        
         pred_mean, model_pred_std = self.decoder(
-            grid_prev_emb, latent_samples, graph_emb
+            high_res_emb, latent_samples, graph_emb, full_grid_rep
         )  # both (B, num_grid_nodes, d_state)
 
         if self.output_std:
@@ -495,19 +496,12 @@ class GraphEFM_mask(ARModel):
             # Use constant set std.-devs.
             pred_std = self.per_var_std  # (d_f,)
 
-        # Compute likelihood (negative loss, exactly likelihood for nll loss)
-        # Note: There are some round-off errors here due to float32
-        # and large values
-        entry_likelihoods = -self.loss(
-            pred_mean,
-            high_res_grid,
-            pred_std,
-            mask=self.interior_mask_bool,
-            average_grid=False,
-            sum_vars=False,
-        )  # (B, num_grid_nodes', d_state)
-        likelihood_term = torch.sum(entry_likelihoods, dim=(1, 2))  # (B,)
-        return likelihood_term, pred_mean, pred_std
+        # Compute MSE loss for masked areas        
+        mask = mask.unsqueeze(-1)
+        squared_error = ((pred_mean - high_res_grid) ** 2) * mask 
+        mse_masked = squared_error.sum() / mask.sum()
+        
+        return mse_masked, pred_mean, pred_std
 
 
     def training_step(self, batch):
@@ -543,7 +537,7 @@ class GraphEFM_mask(ARModel):
     
         """
         
-        loss_like_term, loss_kl_term, _, _ = (
+        loss, _, _ = (
                 self.compute_step_loss(
                     cerra,
                     era5,
@@ -551,24 +545,10 @@ class GraphEFM_mask(ARModel):
                 )
             )
         
-        mean_likelihood = torch.mean(loss_like_term)
         log_dict = {
-            "elbo_likelihood": mean_likelihood,
+            "train_loss": loss,
         }
 
-        if self.kl_beta > 0:
-            # Only compute full KL + ELBO if beta > 0
-            mean_kl = torch.mean(loss_kl_term)
-            elbo = mean_likelihood - mean_kl
-            loss = -mean_likelihood + self.kl_beta * mean_kl
-
-            log_dict["elbo"] = elbo
-            log_dict["elbo_kl"] = mean_kl
-        else:
-            # Pure auto-encoder training
-            loss = -mean_likelihood
-
-        log_dict["train_loss"] = loss
         self.log_dict(
             log_dict, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True
         )
@@ -656,35 +636,25 @@ class GraphEFM_mask(ARModel):
         """
         
         high_res, low_res = batch
-        prediction, pred_std = self.predict_step(high_res, low_res)
+        prediction, pred_std, mask = self.predict_step(high_res, low_res)
         
         target = high_res 
 
-        mean_loss = torch.mean(
-            self.loss(
-                prediction, target, pred_std, mask=self.interior_mask_bool
-            ),
-            dim=0,
-        )  # (time_steps-1)
+        mask = mask.unsqueeze(-1)
+        squared_error = ((prediction - target) ** 2) * mask 
+        val_loss = squared_error.sum() / mask.sum()
 
         # Log loss per time step forward and mean
         val_log_dict = {}
-        val_log_dict["val_mean_loss"] = mean_loss
+        val_log_dict["val_loss"] = val_loss
         self.log_dict(
             val_log_dict, on_step=False, on_epoch=True, sync_dist=True
         )
-
-        # Store MSEs
-        entry_mses = metrics.mse(
-            prediction,
-            target,
-            pred_std,
-            mask=self.interior_mask_bool,
-            sum_vars=False,
-        )  # (B, pred_steps, d_f)
-        self.val_metrics["mse"].append(entry_mses)
+        
         batch_idx = args[0]
-
+        
+        
+        
         # Plot some example predictions using prior and encoder
         if (
             self.trainer.is_global_zero
@@ -694,7 +664,7 @@ class GraphEFM_mask(ARModel):
             # Plot samples
             log_plot_dict = {}
 
-            for var_i, _ in constants.VAL_PLOT_VARS_CERRA.items():
+            for var_i in constants.VAL_PLOT_VARS_CERRA:
                 var_name = constants.PARAM_NAMES_SHORT_CERRA[var_i]
                 var_unit = constants.PARAM_UNITS_CERRA[var_i]
 
@@ -711,15 +681,12 @@ class GraphEFM_mask(ARModel):
                 )
 
                 # Make plots
-                diomerda=1
                 log_plot_dict[
                     f"pred_{var_name}"
                 ] = vis.plot_ensemble_prediction(
                     pred_states,
                     target_state,
-                    pred_states.mean(dim=0),
-                    pred_states.std(dim=0),
-                    self.interior_mask[:, 0],
+                    obs_mask = 1 - mask[batch_idx].flatten(),
                     title=f"{plot_title} (prior)",
                 )
 
@@ -727,7 +694,8 @@ class GraphEFM_mask(ARModel):
                 # Log all plots to wandb
                 wandb.log(log_plot_dict)
 
-            plt.close("all")       
+            plt.close("all")   
+    
             
             
             
@@ -743,26 +711,31 @@ class GraphEFM_mask(ARModel):
         new_state: (B, num_grid_nodes, feature_dim)
         """
         # embed all features
-        grid_prev_emb, graph_emb, _, _ = self.embedd_all(
-            prev_state, prev_prev_state
+        grid_prev_emb, graph_emb, mask, ids_restore= self.embedd_all(
+            prev_state, prev_prev_state, mask_ratio=0.5
         )
 
-        graph_emb["g2m_edge_index"] = None
+        #graph_emb["g2m_edge_index"] = None
         # Compute prior
-        prior_dist = self.prior_model(
+        prior_dist = self.encoder(
             grid_prev_emb, graph_emb=graph_emb
         )  # (B, num_mesh_nodes, d_latent)
 
         # Sample from prior
         latent_samples = prior_dist.rsample()
         # (B, num_mesh_nodes, d_latent)
+        
+        mask_tokens = self.mask_token.repeat(grid_prev_emb.shape[0], ids_restore.shape[1] + 1 - grid_prev_emb.shape[1], 1)
+        x_ = torch.cat([grid_prev_emb, mask_tokens], dim=1)
+        x_ = torch.gather(x_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, grid_prev_emb.shape[2]))  # unshuffle
+        full_grid_rep = x_ + self.decoder_pos_embed
 
         # Compute reconstruction (decoder)
         pred_mean, pred_std = self.decoder(
-            grid_prev_emb, latent_samples, graph_emb
+            grid_prev_emb, latent_samples, graph_emb, full_grid_rep
         )  # (B, num_grid_nodes, d_state)
 
-        return pred_mean, pred_std
+        return pred_mean, pred_std, mask
             
             
     

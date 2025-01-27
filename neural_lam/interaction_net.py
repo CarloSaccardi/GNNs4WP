@@ -83,7 +83,7 @@ class InteractionNet(pyg.nn.MessagePassing):
 
         self.update_edges = update_edges
 
-    def forward(self, send_rep, rec_rep, edge_rep):
+    def forward(self, send_rep, rec_rep, edge_rep, edge_index = None):
         """
         Apply interaction network to update the representations of receiver
         nodes, and optionally the edge representations.
@@ -99,9 +99,12 @@ class InteractionNet(pyg.nn.MessagePassing):
         """
         # Always concatenate to [rec_nodes, send_nodes] for propagation,
         # but only aggregate to rec_nodes
+        if edge_index is None:
+            edge_index = self.edge_index
+        
         node_reps = torch.cat((rec_rep, send_rep), dim=-2)
         edge_rep_aggr, edge_diff = self.propagate(
-            self.edge_index, x=node_reps, edge_attr=edge_rep
+            edge_index, x=node_reps, edge_attr=edge_rep
         )
         rec_diff = self.aggr_mlp(torch.cat((rec_rep, edge_rep_aggr), dim=-1))
 

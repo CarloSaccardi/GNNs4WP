@@ -104,7 +104,7 @@ class HiGraphLatentDecoder(BaseGraphLatentDecoder):
         """
         # Map to bottom mesh level
         current_mesh_rep = self.g2m_gnn(
-            original_grid_rep, graph_emb["mesh"][0], graph_emb["g2m"]
+            original_grid_rep, graph_emb["mesh"][0], graph_emb["g2m"], graph_emb["g2m_edge_index"]
         )  # (B, num_mesh_nodes[0], d_h)
 
         # Up hierarchy

@@ -114,7 +114,7 @@ def plot_prediction(pred, target, obs_mask, title=None, vrange=None):
 
 @matplotlib.rc_context(utils.fractional_plot_bundle(1))
 def plot_ensemble_prediction(
-    samples, target, ens_mean, ens_std, obs_mask, title=None, vrange=None
+    samples, target, obs_mask, title=None, vrange=None
 ):
     """
     Plot example predictions, ground truth, mean and std.-dev.
@@ -143,8 +143,8 @@ def plot_ensemble_prediction(
     )  # Faded border region
 
     fig, axes = plt.subplots(
-        3,
-        3,
+        1,
+        2,
         figsize=(15, 15),
         subplot_kw={"projection": constants.LAMBERT_PROJ},
     )
@@ -165,7 +165,7 @@ def plot_ensemble_prediction(
         alpha=pixel_alpha,
         vmin=vmin,
         vmax=vmax,
-        ax_title="Ens. Mean",
+        ax_title="Prediction",
     )
     # Turn off unused axes
     for ax in axes[(3 + samples.shape[0]) :]:

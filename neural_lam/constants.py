@@ -45,10 +45,7 @@ VAL_PLOT_VARS = {
     14: [1, 3],  # wvint_0
 }
 
-VAL_PLOT_VARS_CERRA = {
-    1: [1, 3],  # r_2
-    4: [1, 3],  # wvint_0
-}
+VAL_PLOT_VARS_CERRA = [0]
 
 # During validation, plot example samples of latent variable from prior and
 # variational distribution

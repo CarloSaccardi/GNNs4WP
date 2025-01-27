@@ -16,7 +16,7 @@ from neural_lam.models.graphcast import GraphCast
 from neural_lam.weather_dataset import WeatherDataset, WeatherDatasetCERRA, ERA5toCERRA
 import os
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+os.environ["CUDA_VISIBLE_DEVICES"] = "4,5"
 
 MODELS = {
     "graphcast": GraphCast,
@@ -57,7 +57,7 @@ def main():
     parser.add_argument(
         "--subset_ds",
         type=int,
-        default=0,
+        default=1,
         help="Use only a small subset of the dataset, for debugging"
         "(default: 0=false)",
     )
@@ -77,7 +77,7 @@ def main():
         help="upper epoch limit (default: 200)",
     )
     parser.add_argument(
-        "--batch_size", type=int, default=8, help="batch size (default: 4)"
+        "--batch_size", type=int, default=1, help="batch size (default: 4)"
     )
     parser.add_argument(
         "--load",
@@ -345,7 +345,7 @@ def main():
         pl.callbacks.ModelCheckpoint(
             dirpath=f"saved_models/{run_name}",
             filename="min_val_loss",
-            monitor="val_mean_loss",
+            monitor="val_loss",
             mode="min",
             save_last=True,
         )

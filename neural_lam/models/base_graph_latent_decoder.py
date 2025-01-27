@@ -1,5 +1,6 @@
 # Third-party
 from torch import nn
+import torch
 
 # First-party
 from neural_lam import constants, utils
@@ -58,7 +59,7 @@ class BaseGraphLatentDecoder(nn.Module):
         """
         raise NotImplementedError("combine_with_latent not implemented")
 
-    def forward(self, grid_rep, latent_samples, graph_emb):
+    def forward(self, grid_rep, latent_samples, graph_emb, full_grid_rep = None):
         """
         Compute prediction (mean and std.-dev.) of next weather state
 
@@ -76,11 +77,18 @@ class BaseGraphLatentDecoder(nn.Module):
         """
         # To mesh
         latent_emb = self.latent_embedder(latent_samples)  # (B, N_mesh, d_h)
-
-        # Resiudal MLP for grid representation
-        residual_grid_rep = grid_rep + self.grid_update_mlp(
-            grid_rep
-        )  # (B, num_grid_nodes, d_h)
+        
+        if full_grid_rep is not None:
+            # Resiudal MLP for grid representation
+            residual_grid_rep = full_grid_rep + self.grid_update_mlp(
+                full_grid_rep
+            )  # (B, num_grid_nodes, d_h)
+            
+        else:
+            # Resiudal MLP for grid representation
+            residual_grid_rep = grid_rep + self.grid_update_mlp(
+                grid_rep
+            )
 
         combined_grid_rep = self.combine_with_latent(
             grid_rep, latent_emb, residual_grid_rep, graph_emb
