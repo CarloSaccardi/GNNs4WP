@@ -16,7 +16,7 @@ from neural_lam.models.graphcast import GraphCast
 from neural_lam.weather_dataset import WeatherDataset, WeatherDatasetCERRA, ERA5toCERRA
 import os
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "4,5"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
 
 MODELS = {
     "graphcast": GraphCast,
@@ -37,14 +37,14 @@ def main():
     parser.add_argument(
         "--dataset_cerra",
         type=str,
-        default="CERRA_interpolated",
+        default="/aspire/CarloData/MASK_GNN_DATA/CERRA_interpolated_300x300",
         help="Dataset, corresponding to name in data directory "
         "(default: meps_example)",
     )
     parser.add_argument(
         "--dataset_era5",
         type=str,
-        default="ERA5/60_n2_40_18/2017",
+        default="/aspire/CarloData/MASK_GNN_DATA/ERA5_60_n2_40_18",
         help="Dataset, corresponding to name in data directory "
         "(default: meps_example)",
     )
@@ -57,7 +57,7 @@ def main():
     parser.add_argument(
         "--subset_ds",
         type=int,
-        default=1,
+        default=0,
         help="Use only a small subset of the dataset, for debugging"
         "(default: 0=false)",
     )
@@ -77,7 +77,7 @@ def main():
         help="upper epoch limit (default: 200)",
     )
     parser.add_argument(
-        "--batch_size", type=int, default=1, help="batch size (default: 4)"
+        "--batch_size", type=int, default=8, help="batch size (default: 4)"
     )
     parser.add_argument(
         "--load",
@@ -94,7 +94,7 @@ def main():
     parser.add_argument(
         "--precision",
         type=str,
-        default=32,
+        default="16-mixed",
         help="Numerical precision to use for model (32/16/bf16) (default: 32)",
     )
 
@@ -102,7 +102,7 @@ def main():
     parser.add_argument(
         "--graph",
         type=str,
-        default="hierarchical_complete",
+        default="hierarchical_complete_new",
         help="Graph to load and use in graph-based model "
         "(default: multiscale)",
     )
@@ -184,20 +184,6 @@ def main():
 
     # Training options
     parser.add_argument(
-        "--ar_steps",
-        type=int,
-        default=1,
-        help="Number of steps to unroll prediction for in loss (1-19) "
-        "(default: 1)",
-    )
-    parser.add_argument(
-        "--control_only",
-        type=int,
-        default=0,
-        help="Train only on control member of ensemble data "
-        "(default: 0 (False))",
-    )
-    parser.add_argument(
         "--loss",
         type=str,
         default="mse",
@@ -220,29 +206,6 @@ def main():
         help="Number of epochs training between each validation run "
         "(default: 1)",
     )
-    parser.add_argument(
-        "--kl_beta",
-        type=float,
-        default=1.0,
-        help="Beta weighting in front of kl-term in ELBO (default: 1)",
-    )
-    parser.add_argument(
-        "--crps_weight",
-        type=float,
-        default=0,
-        help="Weighting for CRPS term of loss, not computed if = 0. CRPS is "
-        "computed based on trajectories sampled using prior distribution. "
-        "(default: 0)",
-    )
-    parser.add_argument(
-        "--sample_obs_noise",
-        type=int,
-        default=0,
-        help="If observation noise should be sampled during rollouts (both "
-        "training and eval), or just mean prediction used "
-        "(default: 0 (no))",
-    )
-
     # Evaluation options
     parser.add_argument(
         "--eval",
@@ -250,19 +213,6 @@ def main():
         default=None,
         help="Eval model on given data split (val/test) "
         "(default: None (train model))",
-    )
-    parser.add_argument(
-        "--n_example_pred",
-        type=int,
-        default=1,
-        help="Number of example predictions to plot during val/test "
-        "(default: 1)",
-    )
-    parser.add_argument(
-        "--ensemble_size",
-        type=int,
-        default=5,
-        help="Number of ensemble members during evaluation (default: 5)",
     )
     args = parser.parse_args()
 
@@ -290,21 +240,18 @@ def main():
             args.dataset_era5,
             split="train",
             subset=bool(args.subset_ds),
-            control_only=args.control_only,
         ),
         args.batch_size,
         shuffle=True,
         num_workers=args.n_workers,
     )
-    max_pred_length = (65 // args.step_length) - 2  # 19
     
     val_loader = torch.utils.data.DataLoader(
         ERA5toCERRA(
             args.dataset_cerra,
             args.dataset_era5,
-            split="train",#TODO: Change to val
-            subset=False,
-            control_only=args.control_only,
+            split="val",
+            subset=bool(args.subset_ds),
         ),
         args.batch_size,
         shuffle=False,
@@ -314,9 +261,9 @@ def main():
     # Instantiate model + trainer
     if torch.cuda.is_available():
         device_name = "cuda"
-        torch.set_float32_matmul_precision(
-            "high"
-        )  # Allows using Tensor Cores on A100s
+        #torch.set_float32_matmul_precision(
+        #    "high"
+        #)  # Allows using Tensor Cores on A100s
     else:
         device_name = "cpu"
 
@@ -372,7 +319,7 @@ def main():
     # Training strategy
     # If doing pure autoencoder training (kl_beta = 0), the prior network is not
     # used at all in producing the loss. This is desired, but DDP complains.
-    strategy = "ddp" if args.kl_beta > 0 else "ddp_find_unused_parameters_true"
+    strategy = "ddp"
 
     trainer = pl.Trainer(
         max_epochs=args.epochs,
@@ -397,12 +344,11 @@ def main():
             eval_loader = val_loader
         else:  # Test
             eval_loader = torch.utils.data.DataLoader(
-                WeatherDataset(
-                    args.dataset,
-                    pred_length=max_pred_length,
-                    split="test",
-                    subsample_step=args.step_length,
-                    subset=bool(args.subset_ds),
+                ERA5toCERRA(
+                    args.dataset_cerra,
+                    args.dataset_era5,
+                    split="test",#TODO: Change to val
+                    subset=False,
                 ),
                 args.batch_size,
                 shuffle=False,

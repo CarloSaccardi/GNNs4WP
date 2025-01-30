@@ -11,10 +11,125 @@ from neural_lam import constants
 import logging
 import pathlib
 
+import matplotlib
+import matplotlib.pyplot as plt
+
+from neural_lam import constants, utils
 
 
 
 
+def plot_on_axis_cerra(ax, data, alpha=None, vmin=None, vmax=None, ax_title=None):
+    """
+    Plot weather state on given axis
+    """
+    #ax.coastlines()  # Add coastline outlines
+    data_grid = data.reshape(300,300)#.cpu().numpy()
+    im = ax.imshow(
+        data_grid,
+        origin="lower",
+        #extent=constants.GRID_LIMITS_CERRA,
+        alpha=alpha,
+        vmin=vmin,
+        vmax=vmax,
+        cmap="plasma",
+    )
+
+    if ax_title:
+        ax.set_title(ax_title, size=15)
+    return im
+
+def plot_on_axis_era5(ax, data, alpha=None, vmin=None, vmax=None, ax_title=None):
+    """
+    Plot weather state on given axis
+    """
+    #ax.coastlines()  # Add coastline outlines
+    data_grid = data.reshape(81,81)#.cpu().numpy()
+    im = ax.imshow(
+        data_grid,
+        origin="lower",
+        #extent=constants.GRID_LIMITS_ERA5,
+        alpha=alpha,
+        vmin=vmin,
+        vmax=vmax,
+        cmap="plasma",
+    )
+
+    if ax_title:
+        ax.set_title(ax_title, size=15)
+    return im
+
+
+@matplotlib.rc_context(utils.fractional_plot_bundle(1))
+def plot_ensemble_prediction(
+    low_res, high_res, obs_mask, title=None, vrange=None
+):
+    """
+    Plot example predictions, ground truth, mean and std.-dev.
+    from ensemble forecast
+
+    low_res: (S, N_grid,)
+    high_res: (N_grid,)
+    ens_mean: (N_grid,)
+    ens_std: (N_grid,)
+    obs_mask: (N_grid,)
+    (optional) title: title of plot
+    (optional) vrange: tuple of length with common min and max of values
+        (not for std.)
+    """
+    low_res = low_res.flatten()
+    high_res = high_res.flatten()
+    # Get common scale for values
+    # Set up masking of border region
+    """
+    mask_reshaped = obs_mask.reshape(*constants.GRID_SHAPE_CERRA)
+    pixel_alpha = (
+        mask_reshaped.clamp(0.7, 1).cpu().numpy()
+    )  # Faded border region
+    """
+
+    fig, axes = plt.subplots(
+        1,
+        2,
+        figsize=(15, 15),
+        #subplot_kw={"projection": constants.LAMBERT_PROJ},
+    )
+    axes = axes.flatten()
+
+    # Plot high_res, ensemble mean and std.
+    gt_im = plot_on_axis_cerra(
+        axes[0],
+        high_res,
+        alpha=None,
+        vmin=high_res.min().item(),
+        vmax=high_res.max().item(),
+        ax_title="High Resolution",
+    )
+    plot_on_axis_era5(
+        axes[1],
+        low_res,
+        alpha=None,
+        vmin=low_res.min().item(),
+        vmax=low_res.max().item(),
+        ax_title="Low Resolution",
+    )
+    # Turn off unused axes
+    for ax in axes[(3 + low_res.shape[0]) :]:
+        ax.axis("off")
+
+    # Add colorbars
+    values_cbar = fig.colorbar(
+        gt_im, ax=axes[:2], aspect=60, location="bottom", shrink=0.9
+    )
+    values_cbar.ax.tick_params(labelsize=10)
+    
+    if title:
+        fig.suptitle(title, size=20)
+        
+    #save the figure
+    plt.savefig('grid_representation.png')
+        
+    return fig
 
 def interpolate_xr(cerra_path, era5_path, output_folder):
     """
@@ -50,7 +165,7 @@ def interpolate_xr(cerra_path, era5_path, output_folder):
 
 
 
-def PRES_to_npy(data_folder="/aspire/CarloData/CERRA/2017", output_folder="/aspire/CarloData/CERRA_interpolated/2017"):
+def PRES_to_npy(data_folder="/aspire/CarloData/CERRA_interpolated/2018/PRES", output_folder="/aspire/CarloData/CERRA_interpolated/2018/samples"):
     """
     data_folder: str - The folder containing the _PRES.grb files
     output_folder: str - The folder to save the .npy files
@@ -155,40 +270,6 @@ class CERRA():
         """
         os.makedirs(path, exist_ok=True)
         return path
-
-    
-    
-    
-    def plot_on_axis(self, data, alpha=None, vmin=None, vmax=None, ax_title=None):
-        """
-        Plot weather state on given axis
-        """
-        _, axes = plt.subplots(
-            3,
-            3,
-            figsize=(15, 15),
-            subplot_kw={"projection": constants.LAMBERT_PROJ},
-        )
-        ax = axes.flatten()
-        ax = ax[0]
-        
-        
-        ax.coastlines()  # Add coastline outlines
-        data_grid = data.reshape(self.grid_size).cpu().numpy()
-        im = ax.imshow(
-            data_grid,
-            origin="lower",
-            extent=constants.GRID_LIMITS_CERRA,
-            alpha=alpha,
-            vmin=vmin,
-            vmax=vmax,
-            cmap="plasma",
-        )
-
-        if ax_title:
-            ax.set_title(ax_title, size=15)
-        return im
-    
     
     def extract_subgrid(self, center_lat: float, center_lon: float, grid_size: int, folder: str = "samples", plot: bool = True):
         """
@@ -427,26 +508,36 @@ class CERRA():
         
     
 if __name__ == "__main__":
-    
+    """
     cerra = CERRA(grid_size=300, 
                   npy_samples_path_in="data/CERRA_interpolated/samples", 
                   npy_samples_path_out="data/CERRA_interpolated", 
                   original_grb_path="/aspire/CarloData/CERRA_interpolated/2017/PRES/CERRA_2017_01_01-00_PRES.grb",
                   default_grid_size=300)
     
-    """
+    
     cerra = CERRA(grid_size=81, 
                   npy_samples_path_in="data/ERA5/60_n2_40_18/2017/samples", 
                   npy_samples_path_out="data/ERA5/60_n2_40_18/2017", 
                   original_grb_path="/aspire/CarloData/ERA5/60_n2_40_18/2017/data_stream-oper_stepType-instant.nc",
                   default_grid_size=81)
-    """
+    
     
     cerra.create_dataset(samples_folder="samples", 
                          static_folder="static", 
                          border_width=10, 
                          plot=True,
                          interpolate_to_ERA5=True)
+    
+    """
+    
+    high_res = np.load("/aspire/CarloData/MASK_GNN_DATA/CERRA_interpolated_300x300/samples/val/nwp_2019082100_mbr000.npy")
+    low_res = np.load("/aspire/CarloData/MASK_GNN_DATA/ERA5_60_n2_40_18/samples/val/nwp_2019082100_mbr000.npy")
+    plot_ensemble_prediction(low_res[:,:,0], high_res[:,:,0], obs_mask=None, title=None, vrange=None)
+    
+    #plot_ensemble_prediction(low_res[:,:,0], high_res[:,:,0], obs_mask=None, title=None, vrange=None)
+    
+
                          
     
     

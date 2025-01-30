@@ -483,10 +483,9 @@ class ERA5toCERRA(torch.utils.data.Dataset):
         self,
         dataset_name_CERRA,
         dataset_name_ERA5,
-        split="train",
+        split,
         standardize=True,
         subset=False,
-        control_only=False,
     ):
         super().__init__()
 
@@ -500,7 +499,7 @@ class ERA5toCERRA(torch.utils.data.Dataset):
         )
 
         member_file_regexp = (
-            "nwp*mbr000.npy" if control_only else "nwp*mbr*.npy"
+             "nwp*mbr*.npy"
         )
         
         #get file names for CERRA
@@ -528,20 +527,16 @@ class ERA5toCERRA(torch.utils.data.Dataset):
             
             #standardize metrics for CERRA
             ds_stats_CERRA = utils.load_dataset_stats(dataset_name_CERRA, "cpu")
-            self.data_mean_CERRA, self.data_std_CERRA, self.flux_mean_CERRA, self.flux_std_CERRA = (
+            self.data_mean_CERRA, self.data_std_CERRA = (
                 ds_stats_CERRA["data_mean"],
                 ds_stats_CERRA["data_std"],
-                ds_stats_CERRA["flux_mean"],
-                ds_stats_CERRA["flux_std"],
             )
             
             #standardize metrics for ERA5
             ds_stats_era5 = utils.load_dataset_stats(dataset_name_ERA5, "cpu")
-            self.data_mean_era5, self.data_std_era5, self.flux_mean_era5, self.flux_std_era5 = (
+            self.data_mean_era5, self.data_std_era5 = (
                 ds_stats_era5["data_mean"],
                 ds_stats_era5["data_std"],
-                ds_stats_era5["flux_mean"],
-                ds_stats_era5["flux_std"],
             )
 
         # If subsample index should be sampled (only duing training)

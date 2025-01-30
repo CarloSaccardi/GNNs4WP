@@ -297,21 +297,21 @@ def main():
     parser.add_argument(
         "--dataset_low",
         type=str,
-        default="ERA5/60_n2_40_18/2017",
+        default="/aspire/CarloData/MASK_GNN_DATA/ERA5_60_n2_40_18",
         help="Dataset to load grid point coordinates from "
         "(default: meps_example)",
     )
     parser.add_argument(
         "--dataset_high",
         type=str,
-        default="CERRA_interpolated",
+        default="/aspire/CarloData/MASK_GNN_DATA/CERRA_interpolated_300x300",
         help="Dataset to load grid point coordinates from "
         "(default: meps_example)",
     )
     parser.add_argument(
         "--graph",
         type=str,
-        default="hierarchical_complete",
+        default="hierarchical_complete_new",
         help="Name to save graph as (default: multiscale)",
     )
     parser.add_argument(
@@ -334,18 +334,14 @@ def main():
         help="Generate hierarchical mesh graph (default: 0, no)",
     )
     parser.add_argument(
-        "--interpolate",
-        type=bool,
-        default=False,
-        help="Interpolate CERRA gird coordinates to ERA5 grid coordinates (default: False)",
-    )
-    parser.add_argument(
-        "--complete_graph",
-        type=bool,
-        default=True,
-        help="Create a complete graph with all nodes connected (default: False)",
+        "--lowRes_grid_features",
+        type=str,
+        default="/aspire/CarloData/MASK_GNN_DATA/ERA5_60_n2_40_18/static/grid_features.pt",
+        help="path to .pt file containing grid features for low resolution grid",
     )
     args = parser.parse_args()
+    
+    assert args.lowRes_grid_features, "Path to low resolution grid features must be provided"
     
     graph_dir_path = os.path.join("graphs", args.graph)
     os.makedirs(graph_dir_path, exist_ok=True)
@@ -364,6 +360,8 @@ def main():
     
     grid_xy_high = torch.tensor(xy_high)
     pos_max_high = torch.max(torch.abs(grid_xy_high))
+    
+    pos_max = max(pos_max_low, pos_max_high)
 
     #
     # Mesh
@@ -374,7 +372,7 @@ def main():
     nlev = int(np.log(max(grid_xy_low.shape)) / np.log(nx))
     nleaf = nx**nlev  # leaves at the bottom = nleaf**2
 
-    mesh_levels = nlev - 1
+    mesh_levels = nlev # number of levels in mesh graph
     if args.levels:
         # Limit the levels in mesh graph
         mesh_levels = min(mesh_levels, args.levels)
@@ -544,9 +542,10 @@ def main():
     save_edges_list(m2m_graphs, "m2m", graph_dir_path)
 
     # Divide mesh node pos by max coordinate of grid cell
-    #replace first mesh features with features of era5 gird. 
-    #this is necessary since the first layer mesh is not really a mesh but is the actual data coming from era5 dataset.
-    #mesh_pos = [torch.load("data/ERA5/60_n2_40_18/2017/static/grid_features.pt")] + [pos / pos_max_low for pos in mesh_pos[1:]]
+    mesh_pos = [pos / pos_max for pos in mesh_pos]
+    #replace first mesh features with low resolution grid features. This tensor has surface geopotential and position
+    firstMesh_features = torch.load(args.lowRes_grid_features)
+    mesh_pos = [firstMesh_features] + mesh_pos[1:]
 
     # Save mesh positions
     torch.save(
@@ -575,6 +574,11 @@ def main():
 
     G_grid = networkx.grid_2d_graph(Ny, Nx)
     G_grid.clear_edges()
+        # vg features (only pos introduced here)
+    for node in G_grid.nodes:
+        # pos is in feature but here explicit for convenience
+        G_grid.nodes[node]["pos"] = np.array([xy_high[0][node], xy_high[1][node]])
+
     
     if args.plot:
         plot_graph_nodes_only_2graph(from_networkx(G_grid), from_networkx(G[0]), title=f"era5_CERRA")
@@ -584,13 +588,8 @@ def main():
         plot_graph_nodes_only(from_networkx(G_grid), title=f"Mesh graph, complete")
         plt.show()
         plt.savefig(f"complete_mesh.png")
-        
     
-        # vg features (only pos introduced here)
-    for node in G_grid.nodes:
-        # pos is in feature but here explicit for convenience
-        G_grid.nodes[node]["pos"] = np.array([xy_high[0][node], xy_high[1][node]])
-
+    
     # add 1000 to node key to separate grid nodes (1000,i,j) from mesh nodes
     # (i,j) and impose sorting order such that vm are the first nodes
     G_grid = prepend_node_index(G_grid, 1000)

@@ -139,6 +139,7 @@ PARAM_UNITS = [
 # Hard coded for now, but should eventually be part of dataset desc. files
 GRID_SHAPE = (268, 238)  # (y, x)
 GRID_SHAPE_CERRA = (300, 300)  # (y, x)
+GRID_SHAPE_ERA5 = (81, 81)  # (y, x)
 
 LAMBERT_PROJ_PARAMS = {
     "a": 6367470,

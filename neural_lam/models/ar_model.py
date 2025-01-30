@@ -47,11 +47,6 @@ class ARModel(pl.LightningModule):
             # Store constant per-variable std.-dev. weighting
             # Note that this is the inverse of the multiplicative weighting
             # in wMSE/wMAE
-            self.register_buffer(
-                "per_var_std",
-                self.step_diff_std / torch.sqrt(self.param_weights),
-                persistent=False,
-            )
 
         # grid_dim from data + static
         (
@@ -68,10 +63,6 @@ class ARModel(pl.LightningModule):
         # Instantiate loss function
         self.loss = metrics.get_metric(args.loss)
 
-        # Pre-compute interior mask for use in loss function
-        self.register_buffer(
-            "interior_mask", 1.0 - self.border_mask, persistent=False
-        )  # (num_grid_nodes, 1), 1 for non-border
 
         self.step_length = args.step_length  # Number of hours per pred. step
         self.val_metrics = {

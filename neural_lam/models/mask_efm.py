@@ -23,14 +23,6 @@ class GraphEFM_mask(ARModel):
 
     def __init__(self, args):
         super().__init__(args)
-        assert (
-            args.n_example_pred <= args.batch_size
-        ), "Can not plot more examples than batch size in GraphEFM"
-        #self.sample_obs_noise = bool(args.sample_obs_noise)
-        #self.ensemble_size = args.ensemble_size
-        #self.kl_beta = args.kl_beta
-        #self.crps_weight = args.crps_weight
-
 
         # Load graph with static features
         self.hierarchical_graph, graph_ldict = utils.load_graph(args.graph)
@@ -490,18 +482,12 @@ class GraphEFM_mask(ARModel):
             high_res_emb, latent_samples, graph_emb, full_grid_rep
         )  # both (B, num_grid_nodes, d_state)
 
-        if self.output_std:
-            pred_std = model_pred_std  # (B, num_grid_nodes, d_state)
-        else:
-            # Use constant set std.-devs.
-            pred_std = self.per_var_std  # (d_f,)
-
         # Compute MSE loss for masked areas        
         mask = mask.unsqueeze(-1)
         squared_error = ((pred_mean - high_res_grid) ** 2) * mask 
         mse_masked = squared_error.sum() / mask.sum()
         
-        return mse_masked, pred_mean, pred_std
+        return mse_masked, pred_mean, model_pred_std
 
 
     def training_step(self, batch):
