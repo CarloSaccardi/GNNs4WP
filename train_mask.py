@@ -16,7 +16,7 @@ from neural_lam.models.graphcast import GraphCast
 from neural_lam.weather_dataset import WeatherDataset, WeatherDatasetCERRA, ERA5toCERRA
 import os
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,5"
 
 MODELS = {
     "graphcast": GraphCast,
@@ -67,7 +67,7 @@ def main():
     parser.add_argument(
         "--n_workers",
         type=int,
-        default=3,
+        default=8,
         help="Number of workers in data loader (default: 4)",
     )
     parser.add_argument(
@@ -213,6 +213,12 @@ def main():
         default=None,
         help="Eval model on given data split (val/test) "
         "(default: None (train model))",
+    )
+    parser.add_argument(
+        "--mask_ratio",
+        type=float,
+        default=0.75,
+        help="Masking ratio of original grid",
     )
     args = parser.parse_args()
 

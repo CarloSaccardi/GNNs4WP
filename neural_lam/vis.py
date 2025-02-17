@@ -88,7 +88,7 @@ def plot_prediction(pred, target, obs_mask, title=None, vrange=None):
 
     # Plot pred and target
     for ax, data in zip(axes, (target, pred)):
-        ax.coastlines()  # Add coastline outlines
+        #ax.coastlines()  # Add coastline outlines
         data_grid = data.reshape(*constants.GRID_SHAPE_CERRA).cpu().numpy()
         im = ax.imshow(
             data_grid,
@@ -129,12 +129,6 @@ def plot_ensemble_prediction(
     (optional) vrange: tuple of length with common min and max of values
         (not for std.)
     """
-    # Get common scale for values
-    if vrange is None:
-        vmin = min(vals.min().cpu().item() for vals in (samples, target))
-        vmax = max(vals.max().cpu().item() for vals in (samples, target))
-    else:
-        vmin, vmax = vrange
 
     # Set up masking of border region
     mask_reshaped = obs_mask.reshape(*constants.GRID_SHAPE_CERRA)
@@ -146,7 +140,7 @@ def plot_ensemble_prediction(
         1,
         2,
         figsize=(15, 15),
-        subplot_kw={"projection": constants.LAMBERT_PROJ},
+        #subplot_kw={"projection": constants.LAMBERT_PROJ},
     )
     axes = axes.flatten()
 
@@ -155,16 +149,16 @@ def plot_ensemble_prediction(
         axes[0],
         target,
         alpha=pixel_alpha,
-        vmin=vmin,
-        vmax=vmax,
+        vmin=target.min().item(),
+        vmax=target.max().item(),
         ax_title="Ground Truth",
     )
     plot_on_axis(
         axes[1],
         samples,
         alpha=pixel_alpha,
-        vmin=vmin,
-        vmax=vmax,
+        vmin=samples.min().item(),
+        vmax=samples.max().item(),
         ax_title="Prediction",
     )
     # Turn off unused axes
@@ -189,7 +183,7 @@ def plot_on_axis(ax, data, alpha=None, vmin=None, vmax=None, ax_title=None):
     """
     Plot weather state on given axis
     """
-    ax.coastlines()  # Add coastline outlines
+    #ax.coastlines()  # Add coastline outlines
     data_grid = data.reshape(*constants.GRID_SHAPE_CERRA).cpu().numpy()
     im = ax.imshow(
         data_grid,
@@ -229,7 +223,7 @@ def plot_spatial_error(error, obs_mask, title=None, vrange=None):
         figsize=(5, 4.8), subplot_kw={"projection": constants.LAMBERT_PROJ}
     )
 
-    ax.coastlines()  # Add coastline outlines
+    #ax.coastlines()  # Add coastline outlines
     error_grid = error.reshape(*constants.GRID_SHAPE_CERRA).cpu().numpy()
 
     im = ax.imshow(
