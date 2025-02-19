@@ -10,7 +10,7 @@ from tueplots import bundles, figsizes
 
 # First-party
 from neural_lam import constants
-from neural_lam.interaction_net import InteractionNet
+from neural_lam.models.interaction_net import InteractionNet
 import matplotlib.pyplot as plt
 import easydict
 from pyproj import Transformer
@@ -335,4 +335,26 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
     emb = np.concatenate([emb_sin, emb_cos], axis=1)  # (M, D)
     return emb
 
+
+    
+def plot_binary_mask(binary_mask_tensor, title="Binary Mask Visualization"):
+    """
+    Plot the binary mask tensor to visualize the masked areas.
+
+    Parameters:
+    binary_mask_tensor (torch.Tensor): Tensor of shape (x, y) with masking information.
+    title (str): Title for the plot.
+    """
+    # Convert the binary mask tensor to a NumPy array for visualization
+    mask_slice = binary_mask_tensor.cpu().numpy()
+
+    # Plot the binary mask
+    plt.figure(figsize=(8, 8))
+    plt.imshow(mask_slice, cmap='gray', origin='upper', interpolation='nearest')
+    plt.colorbar(label="Mask Value (1: Not Masked, 0: Masked)")
+    plt.title(title)
+    plt.xlabel("Grid X")
+    plt.ylabel("Grid Y")
+    plt.show()
+    plt.savefig("mask_visualization.png")
     

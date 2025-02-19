@@ -11,16 +11,14 @@ from lightning_fabric.utilities import seed
 # First-party
 from neural_lam import constants, utils
 from neural_lam.models.mask_efm import GraphEFM_mask
-from neural_lam.models.graph_fm import GraphFM
 from neural_lam.models.graphcast import GraphCast
-from neural_lam.weather_dataset import WeatherDataset, WeatherDatasetCERRA, ERA5toCERRA
+from neural_lam.weather_dataset import ERA5toCERRA
 import os
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,5"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1,5"
 
 MODELS = {
     "graphcast": GraphCast,
-    "graph_fm": GraphFM,
     "graph_efm": GraphEFM_mask,
 }
 
@@ -220,6 +218,25 @@ def main():
         default=0.75,
         help="Masking ratio of original grid",
     )
+    parser.add_argument(
+        "--wandb_project",
+        type=str,
+        default="neural-lam",
+        help="Wandb project name",
+    )
+    parser.add_argument(
+        "--kl_term",  
+        type=int,
+        default=1,
+        help="KL term in loss function",
+    )
+    parser.add_argument(
+        "--kl_beta",  
+        type=float,
+        default=0.01,
+        help="KL beta term in loss function",
+    )
+    
     args = parser.parse_args()
 
     # Asserts for arguments
@@ -303,23 +320,9 @@ def main():
             save_last=True,
         )
     )
-    # Save checkpoints for minimum loss at specific lead times
-    """
-    this was needed to load val_loss_unroll1, val_loss_unroll3, but since we are not doing video pred anumore, we can remove this
-    for unroll_time in constants.VAL_STEP_CHECKPOINTS:
-        metric_name = f"val_loss_unroll{unroll_time}"
-        callbacks.append(
-            pl.callbacks.ModelCheckpoint(
-                dirpath=f"saved_models/{run_name}",
-                filename=f"min_{metric_name}",
-                monitor=metric_name,
-                mode="min",
-            )
-        )
-        
-    """
+    
     logger = pl.loggers.WandbLogger(
-        project=constants.WANDB_PROJECT, name=run_name, config=args
+        project=args.wandb_project, name=run_name, config=args
     )
 
     # Training strategy

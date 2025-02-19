@@ -3,7 +3,7 @@ import torch
 
 # First-party
 from neural_lam import utils
-from neural_lam.interaction_net import InteractionNet, PropagationNet
+from neural_lam.models.interaction_net import InteractionNet, PropagationNet
 from neural_lam.models.ar_model import ARModel
 
 

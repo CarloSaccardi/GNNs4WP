@@ -3,11 +3,12 @@ from torch import nn
 
 # First-party
 from neural_lam import utils
-from neural_lam.interaction_net import PropagationNet
-from neural_lam.models.base_latent_encoder import BaseLatentEncoder
+from neural_lam.models.interaction_net import PropagationNet
+from torch import distributions as tdists
+import torch
 
 
-class HiGraphLatentEncoder(BaseLatentEncoder):
+class HiGraphLatentEncoder(nn.Module):
     """
     Encoder that maps from grid to mesh and defines a latent distribution
     on mesh.
@@ -25,10 +26,21 @@ class HiGraphLatentEncoder(BaseLatentEncoder):
         hidden_layers=1,
         output_dist="isotropic",
     ):
-        super().__init__(
-            latent_dim,
-            output_dist,
-        )
+        super().__init__()
+
+        # Mapping to parameters of latent distribution
+        self.output_dist = output_dist
+        if output_dist == "isotropic":
+            # Isotopic Gaussian, output only mean (\Sigma = I)
+            self.output_dim = latent_dim
+        elif output_dist == "diagonal":
+            # Isotopic Gaussian, output mean and std
+            self.output_dim = 2 * latent_dim
+
+            # Small epsilon to prevent enccoding to dist. with std.-dev. 0
+            self.latent_std_eps = 1e-4
+        else:
+            assert False, f"Unknown encoder output distribution: {output_dist}"
 
         # GNN from grid to mesh
         self.g2m_gnn = PropagationNet(
@@ -122,3 +134,34 @@ class HiGraphLatentEncoder(BaseLatentEncoder):
         return self.latent_param_map(
             current_mesh_rep
         )  # (B, N_mesh[L], d_output)
+        
+    def forward(self, grid_rep, **kwargs):
+        """
+        Compute distribution over latent variable
+
+        grid_rep: (B, N_grid, d_h)
+        mesh_rep: (B, N_mesh, d_h)
+        g2m_rep: (B, M_g2m, d_h)
+
+        Returns:
+        distribution: latent var. dist. shaped (B, N_mesh, d_latent)
+        """
+        latent_dist_params = self.compute_dist_params(grid_rep, **kwargs)
+
+        if self.output_dist == "diagonal":
+            latent_mean, latent_std_raw = latent_dist_params.chunk(
+                2, dim=-1
+            )  # (B, N_mesh, d_latent) and (B, N_mesh, d_latent)
+            # pylint: disable-next=not-callable
+            latent_std = self.latent_std_eps + nn.functional.softplus(
+                latent_std_raw
+            )  # positive std.
+        else:
+            # isotropic
+            latent_mean = latent_dist_params
+            latent_std = torch.ones_like(latent_mean)
+
+        return tdists.Normal(latent_mean, latent_std)
+
+
+
