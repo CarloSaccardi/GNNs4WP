@@ -25,7 +25,6 @@ class GraphEFM_mask(ARModel):
         # Feature embedders for grid
         self.mlp_blueprint_end = [args.hidden_dim] * (args.hidden_layers + 1)
         self.high_res_embedder = utils.make_mlp([self.grid_dim] + self.mlp_blueprint_end)  # For states up to t-1
-        self.low_res_embedder = utils.make_mlp([self.grid_dim] + self.mlp_blueprint_end)
         # Embedders for mesh
         self.g2m_embedder = utils.make_mlp([self.g2m_dim] + self.mlp_blueprint_end)
         self.m2g_embedder = utils.make_mlp([self.m2g_dim] + self.mlp_blueprint_end)
@@ -54,13 +53,24 @@ class GraphEFM_mask(ARModel):
         m2m_dim = self.m2m_features[0].shape[1]
         mesh_up_dim = self.mesh_up_features[0].shape[1]
         mesh_down_dim = self.mesh_down_features[0].shape[1]
-
-        self.mesh_embedders = torch.nn.ModuleList( [self.low_res_embedder] +
-            [
-                utils.make_mlp([mesh_dim] + self.mlp_blueprint_end)
-                for _ in range(num_levels-1)
-            ]
-        )
+        
+        if args.dataset_era5 is None or args.dataset_cerra is None:
+            #first embedder has to project 2 features, as the first mesh is just a projection of the original grid
+            self.mesh_embedders = torch.nn.ModuleList(
+                [
+                    utils.make_mlp([mesh_dim] + self.mlp_blueprint_end)
+                    for _ in range(num_levels)
+                ]
+            )
+        else:
+            #first embedder has to project 8 features, as the first mesh a lower resolution version of the original grid
+            self.low_res_embedder = utils.make_mlp([self.grid_dim] + self.mlp_blueprint_end)
+            self.mesh_embedders = torch.nn.ModuleList( [self.low_res_embedder] +
+                [
+                    utils.make_mlp([mesh_dim] + self.mlp_blueprint_end)
+                    for _ in range(num_levels-1)
+                ]
+            )
         self.mesh_up_embedders = torch.nn.ModuleList(
             [
                 utils.make_mlp([mesh_up_dim] + self.mlp_blueprint_end)
@@ -231,7 +241,7 @@ class GraphEFM_mask(ARModel):
         grid_emb: (B, num_grid_nodes, d_h)
         graph_embedding: dict with entries of shape (B, *, d_h)
         """
-        batch_size = low_res.shape[0]
+        batch_size = high_res.shape[0]
         # Embed high-res grid nodes
         high_res_grid_features = torch.cat(
             (
@@ -256,7 +266,7 @@ class GraphEFM_mask(ARModel):
         # Embed mesh nodes
         graph_emb["mesh"] = [
             emb(torch.cat((low_res, self.expand_to_batch(node_static_features, batch_size)), dim=-1))
-            if indx == 0 else self.expand_to_batch(emb(node_static_features), batch_size)
+            if (indx ==0 and low_res is not None) else self.expand_to_batch(emb(node_static_features), batch_size)
             for indx, (emb, node_static_features) in enumerate(zip(self.mesh_embedders, self.mesh_static_features))
         ]
         # Embed mesh edges, in-between levels
@@ -353,7 +363,7 @@ class GraphEFM_mask(ARModel):
         forcing_features: (B, pred_steps, num_grid_nodes, d_forcing), where
             index 0 corresponds to index 1 of init_states
         """
-        high_res, low_res = batch
+        high_res, low_res = batch if len(batch) == 2 else (batch, None)
         
         high_res_grid_emb, graph_emb, mask, ids_restore = self.embedd_all(high_res,low_res)
         var_dist, pred_mean, _ = self.encode_sample_decode(high_res_grid_emb, graph_emb, ids_restore)
@@ -377,7 +387,7 @@ class GraphEFM_mask(ARModel):
         Run validation on single batch
         """
         
-        high_res, low_res = batch
+        high_res, low_res = batch if len(batch) == 2 else (batch, None)
         
         high_res_grid_emb, graph_emb, mask, ids_restore = self.embedd_all(high_res,low_res)
         var_dist, prediction, _ = self.encode_sample_decode(high_res_grid_emb, graph_emb, ids_restore)

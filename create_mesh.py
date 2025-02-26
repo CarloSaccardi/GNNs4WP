@@ -292,12 +292,27 @@ def prepend_node_index(graph, new_index):
     return networkx.relabel_nodes(graph, to_mapping, copy=True)
 
 
+def load_grid(dataset):
+    """
+    Load the grid positions from a given dataset directory.
+    Returns:
+    - xy: the numpy array from nwp_xy.npy,
+    - grid_xy: the torch tensor version of xy,
+    - pos_max: the maximum absolute value in grid_xy.
+    """
+    static_dir = os.path.join("data", dataset, "static")
+    xy = np.load(os.path.join(static_dir, "nwp_xy.npy"))
+    grid_xy = torch.tensor(xy)
+    pos_max = torch.max(torch.abs(grid_xy))
+    return xy, pos_max
+
+
 def main():
     parser = ArgumentParser(description="Graph generation arguments")
     parser.add_argument(
         "--dataset_low",
         type=str,
-        default="/aspire/CarloData/MASK_GNN_DATA/ERA5_60_n2_40_18",
+        default=None, #"/aspire/CarloData/MASK_GNN_DATA/ERA5_60_n2_40_18",
         help="Dataset to load grid point coordinates from "
         "(default: meps_example)",
     )
@@ -311,13 +326,13 @@ def main():
     parser.add_argument(
         "--graph",
         type=str,
-        default="hierarchical_complete_new",
+        default="hierarchical_highRes_only",
         help="Name to save graph as (default: multiscale)",
     )
     parser.add_argument(
         "--plot",
         type=int,
-        default=0,
+        default=1,
         help="If graphs should be plotted during generation "
         "(default: 0 (false))",
     )
@@ -341,55 +356,64 @@ def main():
     )
     args = parser.parse_args()
     
-    assert args.lowRes_grid_features, "Path to low resolution grid features must be provided"
-    
     graph_dir_path = os.path.join("graphs", args.graph)
     os.makedirs(graph_dir_path, exist_ok=True)
     
-    # Load grid positions low resolution
-    static_dir_path_low = os.path.join("data", args.dataset_low, "static")
-    xy_low = np.load(os.path.join(static_dir_path_low, "nwp_xy.npy"))
-    
-    # Load grid positions high resolution
-    static_dir_path_high = os.path.join("data", args.dataset_high, "static")
-    xy_high = np.load(os.path.join(static_dir_path_high, "nwp_xy.npy"))
-        
 
-    grid_xy_low = torch.tensor(xy_low)
-    pos_max_low = torch.max(torch.abs(grid_xy_low))
-    
-    grid_xy_high = torch.tensor(xy_high)
-    pos_max_high = torch.max(torch.abs(grid_xy_high))
-    
-    pos_max = max(pos_max_low, pos_max_high)
+    # Load datasets if provided.
+    xy_low, pos_max_low = (None, None)
+    if args.dataset_low is not None:
+        assert args.lowRes_grid_features, "Path to low resolution grid features must be provided"
+        xy_low, pos_max_low = load_grid(args.dataset_low)
+
+    xy_high, pos_max_high = (None, None)
+    if args.dataset_high is not None:
+        xy_high, pos_max_high = load_grid(args.dataset_high)
+
+    # Ensure that at least one dataset is provided.
+    if xy_low is None and xy_high is None:
+        raise ValueError("At least one of dataset_low or dataset_high must be provided.")
+
+    # Determine the reference dataset based on availability.
+    # - If both are provided, we use high-res as reference and combine pos_max.
+    # - If only one is provided, that one becomes the reference.
+    if xy_low is not None and xy_high is not None:
+        xy_ref = xy_high
+        pos_max_ref = max(pos_max_low, pos_max_high)
+    elif xy_high is not None:
+        xy_ref = xy_high
+        pos_max_ref = pos_max_high
+    else:
+        xy_ref = xy_low
+        pos_max_ref = pos_max_low
 
     #
-    # Mesh
+    # Mesh geometry computation
     #
+    nx = 3  # number of children per node (resulting in nx**2 leaves)
+    nlev = int(np.log(max(xy_ref.shape)) / np.log(nx))
+    nleaf = nx ** nlev  # total number of leaves
 
-    # graph geometry
-    nx = 3  # number of children = nx**2
-    nlev = int(np.log(max(grid_xy_low.shape)) / np.log(nx))
-    nleaf = nx**nlev  # leaves at the bottom = nleaf**2
-
-    mesh_levels = nlev # number of levels in mesh graph
-    if args.levels:
-        # Limit the levels in mesh graph
-        mesh_levels = min(mesh_levels, args.levels)
+    # Limit the number of mesh levels if args.levels is provided.
+    mesh_levels = nlev if not args.levels else min(nlev, args.levels)
 
     print(f"nlev: {nlev}, nleaf: {nleaf}, mesh_levels: {mesh_levels}")
+    print(f"pos_max: {pos_max_ref}")
 
-    # multi resolution tree levels
+    #
+    # Build multi-resolution mesh graphs using the reference grid.
+    #
     G = []
-    n = xy_low.shape[1]
-    for lev in range(1, mesh_levels + 1):
-        g = mk_2d_graph(xy_low, n, n)
-        n = int(nleaf / (nx**lev))
+
+    for lev in range(1, mesh_levels): #for lev in range(1, mesh_levels + 1):
+        # Update n for the next level based on the total leaves and current level
+        n = int(nleaf / (nx ** lev))
+        # Create mesh graph
+        g = mk_2d_graph(xy_ref, n, n)
         if args.plot:
             plot_graph(from_networkx(g), title=f"Mesh graph, level {lev}")
             plt.show()
             plt.savefig(f"mesh_level_{lev}.png")
-
         G.append(g)
 
     if args.hierarchical:
@@ -542,10 +566,12 @@ def main():
     save_edges_list(m2m_graphs, "m2m", graph_dir_path)
 
     # Divide mesh node pos by max coordinate of grid cell
-    mesh_pos = [pos / pos_max for pos in mesh_pos]
+    mesh_pos = [pos / pos_max_ref for pos in mesh_pos]
     #replace first mesh features with low resolution grid features. This tensor has surface geopotential and position
-    firstMesh_features = torch.load(args.lowRes_grid_features)
-    mesh_pos = [firstMesh_features] + mesh_pos[1:]
+    if args.dataset_low is not None and args.dataset_high is not None:
+        ValueError("double check the dimensions of the meshes. The first mesh has to be dimension of era5, secon mesh has to be smaller than era5")
+        firstMesh_features = torch.load(args.lowRes_grid_features)
+        mesh_pos = [firstMesh_features] + mesh_pos[1:]
 
     # Save mesh positions
     torch.save(
@@ -569,21 +595,22 @@ def main():
     )
 
     # grid nodes
-    Ny, Nx = xy_high.shape[1:]
-    #G_grid, G_grid_masked = mk_2d_graph_with_masking(xy_high, Ny, Nx, 10, 50, seed=None)
+    Ny, Nx = xy_ref.shape[1:]
+    #G_grid, G_grid_masked = mk_2d_graph_with_masking(xy_ref, Ny, Nx, 10, 50, seed=None)
 
     G_grid = networkx.grid_2d_graph(Ny, Nx)
     G_grid.clear_edges()
         # vg features (only pos introduced here)
     for node in G_grid.nodes:
         # pos is in feature but here explicit for convenience
-        G_grid.nodes[node]["pos"] = np.array([xy_high[0][node], xy_high[1][node]])
+        G_grid.nodes[node]["pos"] = np.array([xy_ref[0][node], xy_ref[1][node]])
 
     
     if args.plot:
-        plot_graph_nodes_only_2graph(from_networkx(G_grid), from_networkx(G[0]), title=f"era5_CERRA")
-        plt.show()
-        plt.savefig(f"era5_cerra.png")
+        if args.dataset_low is not None and args.dataset_high is not None:
+            plot_graph_nodes_only_2graph(from_networkx(G_grid), from_networkx(G[0]), title=f"grid to mesh")
+            plt.show()
+            plt.savefig(f"gird2mesh.png")
         
         plot_graph_nodes_only(from_networkx(G_grid), title=f"Mesh graph, complete")
         plt.show()
@@ -597,7 +624,7 @@ def main():
     # build kd tree for grid point pos
     # order in vg_list should be same as in vg_xy
     vg_list = list(G_grid.nodes)
-    vg_xy = np.array([[xy_high[0][node[1:]], xy_high[1][node[1:]]] for node in vg_list])
+    vg_xy = np.array([[xy_ref[0][node[1:]], xy_ref[1][node[1:]]] for node in vg_list])
     kdt_g = scipy.spatial.KDTree(vg_xy)
 
     # now add (all) mesh nodes, include features (pos)

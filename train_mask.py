@@ -12,10 +12,10 @@ from lightning_fabric.utilities import seed
 from neural_lam import constants, utils
 from neural_lam.models.mask_efm import GraphEFM_mask
 from neural_lam.models.graphcast import GraphCast
-from neural_lam.weather_dataset import ERA5toCERRA
+from neural_lam.weather_dataset import ERA5toCERRA, ERA5toCERRA2
 import os
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1,5"
+os.environ["CUDA_VISIBLE_DEVICES"] = "4,5,7"
 
 MODELS = {
     "graphcast": GraphCast,
@@ -42,7 +42,7 @@ def main():
     parser.add_argument(
         "--dataset_era5",
         type=str,
-        default="/aspire/CarloData/MASK_GNN_DATA/ERA5_60_n2_40_18",
+        default=None, #"/aspire/CarloData/MASK_GNN_DATA/ERA5_60_n2_40_18",
         help="Dataset, corresponding to name in data directory "
         "(default: meps_example)",
     )
@@ -100,7 +100,7 @@ def main():
     parser.add_argument(
         "--graph",
         type=str,
-        default="hierarchical_complete_new",
+        default="hierarchical_highRes_only",
         help="Graph to load and use in graph-based model "
         "(default: multiscale)",
     )
@@ -258,7 +258,7 @@ def main():
 
     # Load data
     train_loader = torch.utils.data.DataLoader(
-        ERA5toCERRA(
+        ERA5toCERRA2(
             args.dataset_cerra,
             args.dataset_era5,
             split="train",
@@ -270,7 +270,7 @@ def main():
     )
     
     val_loader = torch.utils.data.DataLoader(
-        ERA5toCERRA(
+        ERA5toCERRA2(
             args.dataset_cerra,
             args.dataset_era5,
             split="val",
@@ -353,7 +353,7 @@ def main():
             eval_loader = val_loader
         else:  # Test
             eval_loader = torch.utils.data.DataLoader(
-                ERA5toCERRA(
+                ERA5toCERRA2(
                     args.dataset_cerra,
                     args.dataset_era5,
                     split="test",#TODO: Change to val
