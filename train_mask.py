@@ -14,6 +14,7 @@ from neural_lam.models.mask_efm import GraphEFM_mask
 from neural_lam.models.graphcast import GraphCast
 from neural_lam.weather_dataset import ERA5toCERRA, ERA5toCERRA2
 import os
+import yaml
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "4,5,7"
 
@@ -23,15 +24,20 @@ MODELS = {
 }
 
 
-def main():
+def get_args():
     """
     Main function for training and evaluating models
     """
     parser = ArgumentParser(
         description="Train or evaluate NeurWP models for LAM"
     )
-
     # General options
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to config file",
+    )
     parser.add_argument(
         "--dataset_cerra",
         type=str,
@@ -42,7 +48,7 @@ def main():
     parser.add_argument(
         "--dataset_era5",
         type=str,
-        default=None, #"/aspire/CarloData/MASK_GNN_DATA/ERA5_60_n2_40_18",
+        default="/aspire/CarloData/MASK_GNN_DATA/ERA5_60_n2_40_18",
         help="Dataset, corresponding to name in data directory "
         "(default: meps_example)",
     )
@@ -95,12 +101,11 @@ def main():
         default="16-mixed",
         help="Numerical precision to use for model (32/16/bf16) (default: 32)",
     )
-
     # Model architecture
     parser.add_argument(
         "--graph",
         type=str,
-        default="hierarchical_highRes_only",
+        default="hierarchical_HighLow_res",
         help="Graph to load and use in graph-based model "
         "(default: multiscale)",
     )
@@ -179,7 +184,6 @@ def main():
         "passing (g2m, m2g, up in hierarchy), in deterministic models."
         "(default: 0 (no))",
     )
-
     # Training options
     parser.add_argument(
         "--loss",
@@ -215,7 +219,7 @@ def main():
     parser.add_argument(
         "--mask_ratio",
         type=float,
-        default=0.75,
+        default=0.25,
         help="Masking ratio of original grid",
     )
     parser.add_argument(
@@ -236,9 +240,9 @@ def main():
         default=0.01,
         help="KL beta term in loss function",
     )
-    
-    args = parser.parse_args()
+    return parser.parse_args()
 
+def main(args):
     # Asserts for arguments
     assert args.model in MODELS, f"Unknown model: {args.model}"
     assert args.step_length <= 3, "Too high step length"
@@ -250,8 +254,8 @@ def main():
 
     # Get an (actual) random run id as a unique identifier
     random_run_id = random.randint(0, 9999)
-    args.n_workers = len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
-    print(f"Using {args.n_workers} GPUs")
+    N_GPUS = len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    print(f"Using {N_GPUS} GPUs")
 
     # Set seed
     seed.seed_everything(args.seed)
@@ -376,5 +380,19 @@ def main():
         )
 
 
-if __name__ == "__main__":
-    main()
+def update_args(args, config_dict):
+    for key, val in config_dict.items():
+        setattr(args, key, val)  
+  
+
+if __name__ == '__main__':
+    
+    args = get_args()
+
+    if args.config is not None:
+
+        with open(str(args.config), "r") as f:
+            config = yaml.safe_load(f)
+        update_args(args, config)
+
+    main(args)

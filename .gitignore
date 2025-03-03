@@ -79,3 +79,5 @@ tags
 .cdsapirc
 figures/*
 *.out
+
+configs/*
