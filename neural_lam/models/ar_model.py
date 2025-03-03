@@ -37,6 +37,7 @@ class ARModel(pl.LightningModule):
         self.g2m_dim = self.g2m_features.shape[1]
         self.m2g_dim = self.m2g_features.shape[1]
         self.kl_beta = args.kl_beta
+        self.wandb_project = args.wandb_project
         
         self.save_hyperparameters()
         self.lr = args.lr

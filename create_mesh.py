@@ -326,7 +326,7 @@ def main():
     parser.add_argument(
         "--graph",
         type=str,
-        default="hierarchical_highRes_only",
+        default="hierarchical_highRes_only_fewLayers",
         help="Name to save graph as (default: multiscale)",
     )
     parser.add_argument(
@@ -405,7 +405,7 @@ def main():
     #
     G = []
 
-    for lev in range(1, mesh_levels): #for lev in range(1, mesh_levels + 1):
+    for lev in range(1, mesh_levels-1): #for lev in range(1, mesh_levels + 1):
         # Update n for the next level based on the total leaves and current level
         n = int(nleaf / (nx ** lev))
         # Create mesh graph

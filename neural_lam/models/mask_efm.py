@@ -258,6 +258,7 @@ class GraphEFM_mask(ARModel):
         else:
             mask = ids_restore = None
             g2m_features = self.g2m_features
+            graph_emb = {"g2m_edge_index": self.g2m_edge_index}
         # Graph embedding
         graph_emb.update({
             "g2m": self.expand_to_batch(self.g2m_embedder(g2m_features), batch_size),
@@ -412,6 +413,7 @@ class GraphEFM_mask(ARModel):
             self.trainer.is_global_zero
             and batch_idx == 0
             and self.current_epoch % 10 == 0
+            and self.wandb_project is not None
         ):
             self.load_metrics_and_plots(prediction, high_res, mask, batch_idx)
             

@@ -16,7 +16,7 @@ from neural_lam.weather_dataset import ERA5toCERRA, ERA5toCERRA2
 import os
 import yaml
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "4,5,7"
+os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
 MODELS = {
     "graphcast": GraphCast,
@@ -325,9 +325,15 @@ def main(args):
         )
     )
     
-    logger = pl.loggers.WandbLogger(
-        project=args.wandb_project, name=run_name, config=args
-    )
+    if args.wandb_project is not None:
+        logger = pl.loggers.WandbLogger(
+            project=args.wandb_project, name=run_name, config=args
+        )
+    else:
+        logger = pl.loggers.TensorBoardLogger(
+            save_dir="DebugLogs/", name=run_name
+        )  # or CSVLogger
+
 
     # Training strategy
     # If doing pure autoencoder training (kl_beta = 0), the prior network is not
@@ -349,7 +355,7 @@ def main(args):
     )
 
     # Only init once, on rank 0 only
-    if trainer.global_rank == 0:
+    if trainer.global_rank == 0 and isinstance(logger, pl.loggers.WandbLogger):
         utils.init_wandb_metrics(logger)  # Do after wandb.init
 
     if args.eval:
