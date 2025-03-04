@@ -312,21 +312,21 @@ def main():
     parser.add_argument(
         "--dataset_low",
         type=str,
-        default=None, #"/aspire/CarloData/MASK_GNN_DATA/ERA5_60_n2_40_18",
+        default="/aspire/CarloData/MASK_GNN_DATA/ERA5_60_n2_40_18",
         help="Dataset to load grid point coordinates from "
         "(default: meps_example)",
     )
     parser.add_argument(
         "--dataset_high",
         type=str,
-        default="/aspire/CarloData/MASK_GNN_DATA/CERRA_interpolated_300x300",
+        default=None, #"/aspire/CarloData/MASK_GNN_DATA/CERRA_interpolated_300x300",
         help="Dataset to load grid point coordinates from "
         "(default: meps_example)",
     )
     parser.add_argument(
         "--graph",
         type=str,
-        default="hierarchical_highRes_only_fewLayers",
+        default="stocazzo",
         help="Name to save graph as (default: multiscale)",
     )
     parser.add_argument(
@@ -405,7 +405,7 @@ def main():
     #
     G = []
 
-    for lev in range(1, mesh_levels-1): #for lev in range(1, mesh_levels + 1):
+    for lev in range(1, mesh_levels): #for lev in range(1, mesh_levels + 1):
         # Update n for the next level based on the total leaves and current level
         n = int(nleaf / (nx ** lev))
         # Create mesh graph

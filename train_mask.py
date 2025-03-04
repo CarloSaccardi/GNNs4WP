@@ -16,7 +16,7 @@ from neural_lam.weather_dataset import ERA5toCERRA, ERA5toCERRA2
 import os
 import yaml
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,4,5"
 
 MODELS = {
     "graphcast": GraphCast,
@@ -110,6 +110,13 @@ def get_args():
         "(default: multiscale)",
     )
     parser.add_argument(
+        "--graph_conditioner",
+        type=str,
+        default="hierarchical_HighLow_res",
+        help="Graph to load and use in graph-based model, this on is for conditioning"
+        "(default: multiscale)",
+    )
+    parser.add_argument(
         "--hidden_dim",
         type=int,
         default=64,
@@ -168,13 +175,6 @@ def get_args():
         default="isotropic",
         help="Structure of Gaussian distribution in prior network output "
         "(isotropic/diagonal) (default: isotropic)",
-    )
-    parser.add_argument(
-        "--learn_prior",
-        type=int,
-        default=1,
-        help="If the prior should be learned as a mapping from previous state "
-        "and forcing, otherwise static with mean 0 (default: 1 (yes))",
     )
     parser.add_argument(
         "--vertical_propnets",

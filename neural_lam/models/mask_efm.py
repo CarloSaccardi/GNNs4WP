@@ -11,6 +11,7 @@ from neural_lam.models.ar_model import ARModel
 from neural_lam.models.hi_graph_latent_decoder import HiGraphLatentDecoder
 from neural_lam.models.hi_graph_latent_encoder import HiGraphLatentEncoder
 import torch.distributions as tdists
+from neural_lam.models.conditioning_encoder import CondEncoder
 
 
 class GraphEFM_mask(ARModel):
@@ -54,23 +55,12 @@ class GraphEFM_mask(ARModel):
         mesh_up_dim = self.mesh_up_features[0].shape[1]
         mesh_down_dim = self.mesh_down_features[0].shape[1]
         
-        if args.dataset_era5 is None or args.dataset_cerra is None:
-            #first embedder has to project 2 features, as the first mesh is just a projection of the original grid
-            self.mesh_embedders = torch.nn.ModuleList(
-                [
-                    utils.make_mlp([mesh_dim] + self.mlp_blueprint_end)
-                    for _ in range(num_levels)
-                ]
-            )
-        else:
-            #first embedder has to project 8 features, as the first mesh a lower resolution version of the original grid
-            self.low_res_embedder = utils.make_mlp([self.grid_dim] + self.mlp_blueprint_end)
-            self.mesh_embedders = torch.nn.ModuleList( [self.low_res_embedder] +
-                [
-                    utils.make_mlp([mesh_dim] + self.mlp_blueprint_end)
-                    for _ in range(num_levels-1)
-                ]
-            )
+        self.mesh_embedders = torch.nn.ModuleList(
+            [
+                utils.make_mlp([mesh_dim] + self.mlp_blueprint_end)
+                for _ in range(num_levels)
+            ]
+        )
         self.mesh_up_embedders = torch.nn.ModuleList(
             [
                 utils.make_mlp([mesh_up_dim] + self.mlp_blueprint_end)
@@ -93,36 +83,10 @@ class GraphEFM_mask(ARModel):
             args.latent_dim if args.latent_dim is not None else args.hidden_dim
         )
         # Prior
-        """
-        if args.learn_prior:
-            if self.hierarchical_graph:
-                self.prior_model = HiGraphLatentEncoder(
-                    latent_dim,
-                    self.g2m_edge_index,
-                    self.m2m_edge_index,
-                    self.mesh_up_edge_index,
-                    args.hidden_dim,
-                    args.prior_processor_layers,
-                    hidden_layers=args.hidden_layers,
-                    output_dist=args.prior_dist,
-                )
-            else:
-                self.prior_model = GraphLatentEncoder(
-                    latent_dim,
-                    self.g2m_edge_index,
-                    self.m2m_edge_index,
-                    args.hidden_dim,
-                    args.prior_processor_layers,
-                    hidden_layers=args.hidden_layers,
-                    output_dist=args.prior_dist,
-                )
-        else:
-            self.prior_model = ConstantLatentEncoder(
-                latent_dim,
-                self.num_mesh_nodes,
-                output_dist=args.prior_dist,
-            )
-        """
+        
+        if args.graph_conditioner is not None:
+            self.cond_encoder = CondEncoder(args)
+            
         # Enc. + Dec.
         # Encoder
         self.encoder = HiGraphLatentEncoder(
@@ -266,9 +230,10 @@ class GraphEFM_mask(ARModel):
         })
         # Embed mesh nodes
         graph_emb["mesh"] = [
-            emb(torch.cat((low_res, self.expand_to_batch(node_static_features, batch_size)), dim=-1))
-            if (indx ==0 and low_res is not None) else self.expand_to_batch(emb(node_static_features), batch_size)
-            for indx, (emb, node_static_features) in enumerate(zip(self.mesh_embedders, self.mesh_static_features))
+            self.expand_to_batch(emb(node_static_features), batch_size)
+            for emb, node_static_features in zip(
+                self.mesh_embedders, self.mesh_static_features
+            )
         ]
         # Embed mesh edges, in-between levels
         graph_emb["m2m"] = [
@@ -337,7 +302,7 @@ class GraphEFM_mask(ARModel):
         return latent_dist, pred_mean, model_pred_std
         
 
-    def compute_loss(self, prediction, target, latent_dist, mask):
+    def compute_loss(self, prediction, target, latent_dist, cond_latent_dist, mask):
         mask = mask.unsqueeze(-1)
         mask = mask.repeat(1, 1, 5)
         squared_error = ((prediction - target) ** 2) * mask 
@@ -346,12 +311,12 @@ class GraphEFM_mask(ARModel):
         mse = mse_batches.mean()
         
         # Compute KL divergence
-        standard_normal = tdists.Normal(torch.zeros_like(latent_dist.loc), torch.ones_like(latent_dist.scale))
-        kl_div = tdists.kl.kl_divergence(latent_dist, standard_normal).sum(dim=-1).mean()
+        #standard_normal = tdists.Normal(torch.zeros_like(latent_dist.loc), torch.ones_like(latent_dist.scale))
+        kl_div = tdists.kl.kl_divergence(latent_dist, cond_latent_dist).sum(dim=-1).mean()
         
         train_loss = mse + kl_div * self.kl_beta
         
-        return train_loss, mse_per_var
+        return train_loss, mse_per_var, kl_div
 
 
     def training_step(self, batch):
@@ -368,10 +333,12 @@ class GraphEFM_mask(ARModel):
         
         high_res_grid_emb, graph_emb, mask, ids_restore = self.embedd_all(high_res,low_res)
         var_dist, pred_mean, _ = self.encode_sample_decode(high_res_grid_emb, graph_emb, ids_restore)
-        loss, mse_per_var = self.compute_loss(pred_mean, high_res, var_dist, mask)
+        cond_var_dist = self.cond_encoder(low_res)
+        loss, mse_per_var, kl_term = self.compute_loss(pred_mean, high_res, var_dist, cond_var_dist, mask)
         
         log_dict = {
             "train_loss": loss,
+            "train_kl_div": kl_term,
             **{
                 f"train_mse_{constants.PARAM_NAMES_SHORT_CERRA[var_i]} {constants.PARAM_UNITS_CERRA[var_i]}": mse_per_var[var_i]
                 for var_i in range(len(mse_per_var))
@@ -392,11 +359,13 @@ class GraphEFM_mask(ARModel):
         
         high_res_grid_emb, graph_emb, mask, ids_restore = self.embedd_all(high_res,low_res)
         var_dist, prediction, _ = self.encode_sample_decode(high_res_grid_emb, graph_emb, ids_restore)
-        val_loss, val_mse_per_var = self.compute_loss(prediction, high_res, var_dist, mask)
+        cond_var_dist = self.cond_encoder(low_res)
+        val_loss, val_mse_per_var, kl_term = self.compute_loss(prediction, high_res, var_dist, cond_var_dist, mask)
         
         # Log loss per time step forward and mean
         val_log_dict = {
             "val_loss": val_loss,
+            "val_kl_div": kl_term,
             **{
                 f"val_MSE_{constants.PARAM_NAMES_SHORT_CERRA[var_i]} {constants.PARAM_UNITS_CERRA[var_i]}": val_mse_per_var[var_i]
                 for var_i in range(len(val_mse_per_var))

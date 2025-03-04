@@ -48,6 +48,7 @@ class ARModel(pl.LightningModule):
                 static_data_name, static_data_tensor, persistent=False
             )
 
+        """
         # Double grid output dim. to also output std.-dev.
         self.output_std = bool(args.output_std)
         
@@ -55,7 +56,7 @@ class ARModel(pl.LightningModule):
             self.grid_output_dim = 2 * constants.GRID_STATE_DIM_CERRA  # Pred. dim. in grid cell
         else:
             self.grid_output_dim = constants.GRID_STATE_DIM_CERRA  # Pred. dim. in grid cell
-
+        """
         # grid_dim from data + static
         self.num_grid_nodes, grid_static_dim = self.grid_static_features.shape  # 63784 = 268x238
         self.grid_dim = constants.GRID_STATE_DIM_CERRA + grid_static_dim
@@ -78,9 +79,12 @@ class ARModel(pl.LightningModule):
             "mse": [],
             "mae": [],
         }
+        
+        """
         if self.output_std:
             self.test_metrics["output_std"] = []  # Treat as metric
-
+        """
+        
         ##### MAsking parameters #####        
         self.pos_embed = torch.nn.Parameter(torch.zeros(1, self.num_grid_nodes, args.hidden_dim), requires_grad=False)  # fixed sin-cos embedding
         self.mask_token = torch.nn.Parameter(torch.zeros(1, 1, args.hidden_dim))
