@@ -223,6 +223,12 @@ def get_args():
         help="Masking ratio of original grid",
     )
     parser.add_argument(
+        "--masking_block_size",
+        type=int,
+        default=50,
+        help="size of blocks (pathces) for masking",
+    )
+    parser.add_argument(
         "--wandb_project",
         type=str,
         default="neural-lam",

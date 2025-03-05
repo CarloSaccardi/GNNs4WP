@@ -34,6 +34,7 @@ class ARModel(pl.LightningModule):
                 setattr(self, name, attr_value)
         # Specify dimensions of data
         self.mask_ratio = args.mask_ratio
+        self.masking_block_size = args.masking_block_size
         self.g2m_dim = self.g2m_features.shape[1]
         self.m2g_dim = self.m2g_features.shape[1]
         self.kl_beta = args.kl_beta
@@ -42,7 +43,7 @@ class ARModel(pl.LightningModule):
         self.save_hyperparameters()
         self.lr = args.lr
         # Load static features for grid/data
-        static_data_dict = utils.load_static_data(args.dataset_cerra)
+        static_data_dict = utils.load_static_data(args.dataset_cerra) if args.dataset_cerra else utils.load_static_data(args.dataset_era5)
         for static_data_name, static_data_tensor in static_data_dict.items():
             self.register_buffer(
                 static_data_name, static_data_tensor, persistent=False
@@ -81,11 +82,12 @@ class ARModel(pl.LightningModule):
         if self.output_std:
             self.test_metrics["output_std"] = []  # Treat as metric
 
-        ##### MAsking parameters #####        
-        self.pos_embed = torch.nn.Parameter(torch.zeros(1, self.num_grid_nodes, args.hidden_dim), requires_grad=False)  # fixed sin-cos embedding
-        self.mask_token = torch.nn.Parameter(torch.zeros(1, 1, args.hidden_dim))
-        self.decoder_pos_embed = torch.nn.Parameter(torch.zeros(1, self.num_grid_nodes, args.hidden_dim), requires_grad=False)  # fixed sin-cos embedding
-        self.initialize_weights()
+        ##### MAsking parameters #####    
+        if self.mask_ratio is not None:
+            self.pos_embed = torch.nn.Parameter(torch.zeros(1, self.num_grid_nodes, args.hidden_dim), requires_grad=False)  # fixed sin-cos embedding
+            self.mask_token = torch.nn.Parameter(torch.zeros(1, 1, args.hidden_dim))
+            self.decoder_pos_embed = torch.nn.Parameter(torch.zeros(1, self.num_grid_nodes, args.hidden_dim), requires_grad=False)  # fixed sin-cos embedding
+            self.initialize_weights()
         
         
     def initialize_weights(self):

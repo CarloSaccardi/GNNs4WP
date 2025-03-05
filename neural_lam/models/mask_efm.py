@@ -6,7 +6,7 @@ import wandb
 import math
 
 # First-party
-from neural_lam import constants, metrics, utils, vis
+from neural_lam import constants, mask_utils, utils, vis
 from neural_lam.models.ar_model import ARModel
 from neural_lam.models.hi_graph_latent_decoder import HiGraphLatentDecoder
 from neural_lam.models.hi_graph_latent_encoder import HiGraphLatentEncoder
@@ -148,85 +148,6 @@ class GraphEFM_mask(ARModel):
             hidden_layers=args.hidden_layers,
             output_std=bool(args.output_std),
         )
-        
-
-    def masking(self, high_res_grid_emb):
-        #### Masking ####
-        high_res_grid_emb = high_res_grid_emb + self.pos_embed
-        high_res_grid_emb, mask, ids_restore, ids_keep = self.block_random_masking(high_res_grid_emb)
-        keep_uniques = torch.unique(ids_keep[0]) + self.g2m_edge_index[0,0]
-        senders = self.g2m_edge_index[0]
-        mask_edges = torch.isin(senders, keep_uniques)
-        kept_indexes = torch.nonzero(mask_edges, as_tuple=True)[0]
-        g2m_features = self.g2m_features[kept_indexes]
-        #### Mask g2m edge index ####
-        g2m_edge_index_mins = self.g2m_edge_index.min(dim=1, keepdim=True)[0]
-        g2m_edge_index_max_1 = self.g2m_edge_index[1].max()
-        g2m_edge_index = self.g2m_edge_index[:, mask_edges]
-        g2m_edge_index = g2m_edge_index  - g2m_edge_index_mins
-        self.num_rec = g2m_edge_index_max_1 + 1
-        g2m_edge_index[0] = (
-            g2m_edge_index[0] + self.num_rec
-        )
-        unique_senders = torch.unique(g2m_edge_index[0])
-        sorted_senders = torch.sort(unique_senders).values
-        new_senders = torch.arange(self.num_rec, self.num_rec + len(sorted_senders))
-        sender_mapping = dict(zip(sorted_senders.tolist(), new_senders.tolist()))
-        reindexed_senders = torch.tensor([sender_mapping[sender.item()] for sender in g2m_edge_index[0]])
-        g2m_edge_index[0] = reindexed_senders
-        
-        return mask, ids_restore, g2m_features, g2m_edge_index
-    
-    
-    def block_random_masking(self, x, grid_size=300, block_size=50):
-        """
-        Perform random masking on a flattened grid of nodes, grouped into blocks, based on the original 2D grid layout.
-
-        Args:
-            x: Tensor of shape (batch, num_nodes, latent_dim), e.g., (N, 90000, D).
-            grid_size: Size of the grid (e.g., 300x300 for num_nodes=90000).
-            block_size: Size of each block (e.g., 50x50).
-
-        Returns:
-            x_masked: Tensor of shape (batch, num_kept_nodes, latent_dim).
-            mask: Binary mask of shape (batch, num_nodes), 0 for kept, 1 for masked.
-        """
-        N, num_nodes, D = x.shape
-        assert num_nodes == grid_size * grid_size, "num_nodes must match grid size"
-        num_blocks = (grid_size // block_size) ** 2  # Total number of blocks (e.g., 36x36=1296)
-
-        # Step 1: Compute block indices for each node
-        # Reshape flat indices (0 to 89999) back to 2D grid coordinates (row, col)
-        row_indices = torch.arange(grid_size, device=x.device).repeat_interleave(grid_size)
-        col_indices = torch.arange(grid_size, device=x.device).repeat(grid_size)
-
-        # Determine block row and column indices for each node
-        block_row_indices = row_indices // block_size
-        block_col_indices = col_indices // block_size
-
-        # Assign a unique block index to each block
-        block_indices = block_row_indices * (grid_size // block_size) + block_col_indices
-        # `block_indices` has shape (90000,) and assigns each node to a block (0 to 1295)
-
-        # Step 2: Randomly mask a subset of blocks
-        len_keep = int(num_nodes * (1 - self.mask_ratio))
-        noise = torch.rand(num_blocks, device=x.device).repeat(N,1)  # Random noise for each block
-        noise = noise[:, block_indices]  # Expand noise to all nodes and shuffle blocks
-        ids_shuffle = torch.argsort(noise, dim=1)  # ascend: small is keep, large is remove
-        ids_restore = torch.argsort(ids_shuffle, dim=1)
-        ids_keep = ids_shuffle[:, :len_keep]  # Blocks to keep
-        
-        #ids_restore = ids_restore[:, block_indices] # Restore the original block order
-        #ids_keep = ids_keep[:, block_indices]  # Keep the first subset of blocks
-        
-        x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).repeat(1, 1, D))
-        mask = torch.ones([N, num_nodes], device=x.device)
-        
-        #new_len_keep = len_keep * block_size**2
-        mask[:, :len_keep] = 0  # 0 is keep, 1 is remove
-        mask = torch.gather(mask, dim=1, index=ids_restore)
-        
-        return x_masked, mask, ids_restore, ids_keep
     
 
     def embedd_all(self, high_res, low_res):
@@ -253,12 +174,18 @@ class GraphEFM_mask(ARModel):
         high_res_grid_emb = self.high_res_embedder(high_res_grid_features)
         # Masking
         if self.mask_ratio is not None:
-            mask, ids_restore, g2m_features, g2m_edge_index = self.masking(high_res_grid_emb)
+            mask, ids_restore, g2m_features, g2m_edge_index = mask_utils.masking(high_res_grid_emb, 
+                                                                                 self.pos_embed, 
+                                                                                 self.g2m_edge_index, 
+                                                                                 self.g2m_features,
+                                                                                 self.mask_ratio,
+                                                                                 int(self.num_grid_nodes**.5),
+                                                                                 self.masking_block_size)
             graph_emb = {"g2m_edge_index": g2m_edge_index}  # Ensure it is part of the masking block
         else:
             mask = ids_restore = None
             g2m_features = self.g2m_features
-            graph_emb = {"g2m_edge_index": self.g2m_edge_index}
+            graph_emb = {"g2m_edge_index": mask_utils.adjust_g2m_edge_index(self.g2m_edge_index)}
         # Graph embedding
         graph_emb.update({
             "g2m": self.expand_to_batch(self.g2m_embedder(g2m_features), batch_size),
@@ -324,11 +251,14 @@ class GraphEFM_mask(ARModel):
         # Sample from variational distribution
         latent_samples = latent_dist.rsample()  # (B, num_mesh_nodes, d_latent)
 
-        # Compute reconstruction (decoder)        
-        mask_tokens = self.mask_token.repeat(high_res_emb.shape[0], ids_restore.shape[1] + 1 - high_res_emb.shape[1], 1)
-        x_ = torch.cat([high_res_emb, mask_tokens], dim=1)
-        x_ = torch.gather(x_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, high_res_emb.shape[2]))  # unshuffle
-        full_grid_rep = x_ + self.decoder_pos_embed
+        if ids_restore is not None:
+            # Compute reconstruction (decoder)        
+            mask_tokens = self.mask_token.repeat(high_res_emb.shape[0], ids_restore.shape[1] + 1 - high_res_emb.shape[1], 1)
+            x_ = torch.cat([high_res_emb, mask_tokens], dim=1)
+            x_ = torch.gather(x_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, high_res_emb.shape[2]))  # unshuffle
+            full_grid_rep = x_ + self.decoder_pos_embed
+        else:
+            full_grid_rep = None
         
         pred_mean, model_pred_std = self.decoder(
             high_res_emb, latent_samples, graph_emb, full_grid_rep
@@ -338,12 +268,18 @@ class GraphEFM_mask(ARModel):
         
 
     def compute_loss(self, prediction, target, latent_dist, mask):
-        mask = mask.unsqueeze(-1)
-        mask = mask.repeat(1, 1, 5)
-        squared_error = ((prediction - target) ** 2) * mask 
-        mse_batches = squared_error.sum(dim=1) / mask.sum(dim=1)
-        mse_per_var = mse_batches.mean(dim=0)
-        mse = mse_batches.mean()
+        if mask is not None:
+            mask = mask.unsqueeze(-1)
+            mask = mask.repeat(1, 1, 5)
+            squared_error = ((prediction - target) ** 2) * mask 
+            mse_batches = squared_error.sum(dim=1) / mask.sum(dim=1)
+            mse_per_var = mse_batches.mean(dim=0)
+            mse = mse_batches.mean()
+        else:
+            squared_error = (prediction - target) ** 2
+            mse_batches = squared_error.mean(dim=1)
+            mse_per_var = mse_batches.mean(dim=0)
+            mse = mse_batches.mean()
         
         # Compute KL divergence
         standard_normal = tdists.Normal(torch.zeros_like(latent_dist.loc), torch.ones_like(latent_dist.scale))
@@ -351,7 +287,7 @@ class GraphEFM_mask(ARModel):
         
         train_loss = mse + kl_div * self.kl_beta
         
-        return train_loss, mse_per_var
+        return train_loss, mse_per_var, kl_div
 
 
     def training_step(self, batch):
@@ -368,10 +304,11 @@ class GraphEFM_mask(ARModel):
         
         high_res_grid_emb, graph_emb, mask, ids_restore = self.embedd_all(high_res,low_res)
         var_dist, pred_mean, _ = self.encode_sample_decode(high_res_grid_emb, graph_emb, ids_restore)
-        loss, mse_per_var = self.compute_loss(pred_mean, high_res, var_dist, mask)
+        loss, mse_per_var, kl_term = self.compute_loss(pred_mean, high_res, var_dist, mask)
         
         log_dict = {
             "train_loss": loss,
+            "train_kl_div": kl_term,
             **{
                 f"train_mse_{constants.PARAM_NAMES_SHORT_CERRA[var_i]} {constants.PARAM_UNITS_CERRA[var_i]}": mse_per_var[var_i]
                 for var_i in range(len(mse_per_var))
@@ -392,11 +329,12 @@ class GraphEFM_mask(ARModel):
         
         high_res_grid_emb, graph_emb, mask, ids_restore = self.embedd_all(high_res,low_res)
         var_dist, prediction, _ = self.encode_sample_decode(high_res_grid_emb, graph_emb, ids_restore)
-        val_loss, val_mse_per_var = self.compute_loss(prediction, high_res, var_dist, mask)
+        val_loss, val_mse_per_var, kl_term = self.compute_loss(prediction, high_res, var_dist, mask)
         
         # Log loss per time step forward and mean
         val_log_dict = {
             "val_loss": val_loss,
+            "val_kl_div": kl_term,
             **{
                 f"val_MSE_{constants.PARAM_NAMES_SHORT_CERRA[var_i]} {constants.PARAM_UNITS_CERRA[var_i]}": val_mse_per_var[var_i]
                 for var_i in range(len(val_mse_per_var))
@@ -419,7 +357,11 @@ class GraphEFM_mask(ARModel):
             
             
     def load_metrics_and_plots(self, prediction, high_res, mask, batch_idx):
-            # Plot samples
+        
+        if mask is None:
+            mask = torch.ones_like(high_res[:, :, 0])
+        
+        # Plot samples
         log_plot_dict = {}
 
         for var_i in constants.VAL_PLOT_VARS_CERRA:
