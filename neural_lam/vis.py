@@ -111,13 +111,6 @@ def plot_prediction(pred, target, obs_mask, title=None, vrange=None):
 
     return fig
 
-def get_pixel_alpha(obs_mask):
-    """
-    Get alpha values for pixels based on observation mask
-    """
-    mask_reshaped = obs_mask.reshape(*constants.GRID_SHAPE_CERRA)
-    return mask_reshaped.clamp(0.7, 1).cpu().numpy()
-
 
 @matplotlib.rc_context(utils.fractional_plot_bundle(1))
 def plot_ensemble_prediction(
@@ -138,15 +131,14 @@ def plot_ensemble_prediction(
     """
 
     # Set up masking of border region
-    GT_obs_mask = 1 - obs_mask
-    vis_obs_mask = np.ones_like(obs_mask)
-    pixel_alpha = get_pixel_alpha(obs_mask)
-    GT_pixel_alpha = get_pixel_alpha(GT_obs_mask)
-    vis_pixel_alpha = get_pixel_alpha(vis_obs_mask)
+    mask_reshaped = obs_mask.reshape(*constants.GRID_SHAPE_CERRA)
+    pixel_alpha = (
+        mask_reshaped.clamp(0.7, 1).cpu().numpy()
+    )  # Faded border region
 
     fig, axes = plt.subplots(
         1,
-        3,
+        2,
         figsize=(15, 15),
         #subplot_kw={"projection": constants.LAMBERT_PROJ},
     )
@@ -156,7 +148,7 @@ def plot_ensemble_prediction(
     gt_im = plot_on_axis(
         axes[0],
         target,
-        alpha=GT_pixel_alpha,
+        alpha=pixel_alpha,
         vmin=target.min().item(),
         vmax=target.max().item(),
         ax_title="Ground Truth",
@@ -165,14 +157,6 @@ def plot_ensemble_prediction(
         axes[1],
         samples,
         alpha=pixel_alpha,
-        vmin=samples.min().item(),
-        vmax=samples.max().item(),
-        ax_title="Prediction",
-    )
-    plot_on_axis(
-        axes[2],
-        samples,
-        alpha=vis_pixel_alpha,
         vmin=samples.min().item(),
         vmax=samples.max().item(),
         ax_title="Prediction",
