@@ -20,6 +20,9 @@ class GraphEFM_mask(ARModel):
 
     def __init__(self, args):
         super().__init__(args)
+        
+        self.test_MSEs = []
+        self.test_MAEs = []
 
         # Define sub-models
         # Feature embedders for grid
@@ -268,6 +271,7 @@ class GraphEFM_mask(ARModel):
         
 
     def compute_loss(self, prediction, target, latent_dist, mask):
+        """
         if mask is not None:
             mask = mask.unsqueeze(-1)
             mask = mask.repeat(1, 1, 5)
@@ -276,10 +280,11 @@ class GraphEFM_mask(ARModel):
             mse_per_var = mse_batches.mean(dim=0)
             mse = mse_batches.mean()
         else:
-            squared_error = (prediction - target) ** 2
-            mse_batches = squared_error.mean(dim=1)
-            mse_per_var = mse_batches.mean(dim=0)
-            mse = mse_batches.mean()
+        """
+        squared_error = (prediction - target) ** 2
+        mse_batches = squared_error.mean(dim=1)
+        mse_per_var = mse_batches.mean(dim=0)
+        mse = mse_batches.mean()
         
         # Compute KL divergence
         standard_normal = tdists.Normal(torch.zeros_like(latent_dist.loc), torch.ones_like(latent_dist.scale))
@@ -395,6 +400,40 @@ class GraphEFM_mask(ARModel):
             wandb.log(log_plot_dict)
 
         plt.close("all")   
+        
+        
+    def test_step(self, batch):
+        """
+        Run testing on a single batch.
+        """
+        high_res, low_res = batch if len(batch) == 2 else (batch, None)
+        
+        high_res_grid_emb, graph_emb, mask, ids_restore = self.embedd_all(high_res, low_res)
+        var_dist, prediction, _ = self.encode_sample_decode(high_res_grid_emb, graph_emb, ids_restore)
+        test_MSE, _ = utils.compute_MSE_entiregrid(prediction, high_res)
+        test_MAE, _ = utils.compute_MAE_entiregrid(prediction, high_res)
+        
+        self.test_MSEs.append(test_MSE)
+        self.test_MAEs.append(test_MAE)
+        
+        return {"test_MSE": test_MSE, "test_MAE": test_MAE}
+
+
+
+    def on_test_epoch_end(self):
+        """
+        Called at the end of the testing epoch to aggregate results.
+        """
+        test_MSE_mean = torch.cat(self.test_MSEs, dim=0).mean()
+        test_MAE_mean = torch.cat(self.test_MAEs, dim=0).mean()
+        
+        self.log("test_MSE_mean", test_MSE_mean)
+        self.log("test_MAE_mean", test_MAE_mean)
+        print(f"Mean Test MSE: {test_MSE_mean}, Mean Test MAE: {test_MAE_mean}")
+        
+        
+        
+        
             
             
     

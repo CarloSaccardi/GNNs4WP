@@ -358,3 +358,57 @@ def plot_binary_mask(binary_mask_tensor, title="Binary Mask Visualization"):
     plt.show()
     plt.savefig("mask_visualization.png")
     
+    
+def compute_MSE_entiregrid(prediction, targets):
+    """
+    Compute the Mean Squared Error (MSE) for the entire grid.
+
+    Parameters:
+    preds (torch.Tensor): Tensor of shape (batch_size, grid_size, grid_size) with the predicted values.
+    targets (torch.Tensor): Tensor of shape (batch_size, grid_size, grid_size) with the target values.
+    mask (torch.Tensor): Tensor of shape (grid_size, grid_size) with the binary mask.
+
+    Returns:
+    mse (float): Mean Squared Error (MSE) for the entire grid.
+    """
+    squared_error = (prediction - targets) ** 2
+    mse_batches = squared_error.mean(dim=1)
+    #mse_per_var = mse_batches.mean(dim=0)
+    
+    return mse_batches, mse_batches.mean(dim=0)
+
+def compute_MSE_masked(prediction, targets, mask):
+
+    mask = mask.unsqueeze(-1)
+    mask = mask.repeat(1, 1, 5)
+    squared_error = ((prediction - targets) ** 2) * mask 
+    mse_batches = squared_error.sum(dim=1) / mask.sum(dim=1)
+    #mse_per_var = mse_batches.mean(dim=0)
+    return mse_batches.mean(), mse_batches.mean(dim=0)
+
+def compute_MAE_entiregrid(prediction, targets):
+    """
+    Compute the Mean Absolute Error (MAE) for the entire grid.
+
+    Parameters:
+    preds (torch.Tensor): Tensor of shape (batch_size, grid_size, grid_size) with the predicted values.
+    targets (torch.Tensor): Tensor of shape (batch_size, grid_size, grid_size) with the target values.
+    mask (torch.Tensor): Tensor of shape (grid_size, grid_size) with the binary mask.
+
+    Returns:
+    mae (float): Mean Absolute Error (MAE) for the entire grid.
+    """
+    absolute_error = torch.abs(prediction - targets)
+    mae_batches = absolute_error.mean(dim=1)
+    #mae_per_var = mae_batches.mean(dim=0)
+    
+    return mae_batches, mae_batches.mean(dim=0)
+
+
+def compute_MAE_masked(prediction, targets, mask):
+    mask = mask.unsqueeze(-1)
+    mask = mask.repeat(1, 1, 5)
+    absolute_error = torch.abs(prediction - targets) * mask
+    mae_batches = absolute_error.sum(dim=1) / mask.sum(dim=1)
+    #mae_per_var = mae_batches.mean(dim=0)
+    return mae_batches.mean(), mae_batches.mean(dim=0)
