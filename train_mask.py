@@ -16,7 +16,7 @@ from neural_lam.weather_dataset import ERA5toCERRA, ERA5toCERRA2
 import os
 import yaml
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 MODELS = {
     "graphcast": GraphCast,
@@ -246,6 +246,12 @@ def get_args():
         default=0.01,
         help="KL beta term in loss function",
     )
+    parser.add_argument(
+        "--run_name",  
+        type=str,
+        default=None,
+        help="Name of the run",
+    )
     return parser.parse_args()
 
 def main(args):
@@ -312,10 +318,11 @@ def main(args):
         model = model_class(args)
 
     prefix = "subset-" if args.subset_ds else ""
+    prefix += args.run_name if hasattr(args, "run_name") else ""
     if args.eval:
         prefix = prefix + f"eval-{args.eval}-"
     run_name = (
-        f"{prefix}{args.model}-{args.processor_layers}x{args.hidden_dim}-"
+        f"{prefix}-{args.model}-{args.processor_layers}x{args.hidden_dim}-"
         f"{time.strftime('%m_%d_%H')}-{random_run_id:04d}"
     )
 
