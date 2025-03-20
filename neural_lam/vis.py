@@ -184,7 +184,7 @@ def plot_on_axis(ax, data, alpha=None, vmin=None, vmax=None, ax_title=None):
     Plot weather state on given axis
     """
     #ax.coastlines()  # Add coastline outlines
-    data_grid = data.reshape(*constants.GRID_SHAPE_CERRA).cpu().numpy()
+    data_grid = data.reshape(*constants.GRID_SHAPE_CERRA).to(torch.float32).cpu().numpy()
     im = ax.imshow(
         data_grid,
         origin="lower",
