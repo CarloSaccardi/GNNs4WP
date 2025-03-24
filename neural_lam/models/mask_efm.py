@@ -390,20 +390,19 @@ class GraphEFM_mask(ARModel):
         var_dist, prediction, _ = self.encode_sample_decode(high_res_grid_emb, graph_emb, ids_restore)
         val_loss, val_mse_per_var, kl_term = self.compute_loss(prediction, high_res, var_dist, mask)
         
-        """
+        
         # Log loss per time step forward and mean
         val_log_dict = {
-            "val_loss": val_loss,
-            "val_kl_div": kl_term,
-            **{
-                f"val_MSE_{constants.PARAM_NAMES_SHORT_CERRA[var_i]} {constants.PARAM_UNITS_CERRA[var_i]}": val_mse_per_var[var_i]
-                for var_i in range(len(val_mse_per_var))
-            },
+            "val_loss": val_loss#,
+            #"val_kl_div": kl_term,
+            #**{
+            #    f"val_MSE_{constants.PARAM_NAMES_SHORT_CERRA[var_i]} {constants.PARAM_UNITS_CERRA[var_i]}": val_mse_per_var[var_i]
+            #    for var_i in range(len(val_mse_per_var))
+            #},
         }
         self.log_dict(
             val_log_dict, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True
         )
-        """
         
         batch_idx = args[0]
         
