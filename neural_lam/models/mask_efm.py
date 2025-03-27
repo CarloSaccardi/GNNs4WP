@@ -153,56 +153,6 @@ class GraphEFM_mask(ARModel):
             hidden_layers=args.hidden_layers,
             output_std=bool(args.output_std),
         )
-        
-        
-    def compute_layer_stats(self, layers):
-        # If not a list, wrap the module in a list.
-        if not isinstance(layers, list):
-            layers = [layers]
-        # Compute the 2-norm for each module in the list.
-        norms_list = [grad_norm(layer, norm_type=2) for layer in layers]
-        # Extract individual gradient norms from all layers, excluding the total summary.
-        values = [
-            value
-            for norm_dict in norms_list
-            for key, value in norm_dict.items()
-            if key != "grad_2.0_norm_total"
-        ]
-        mean_norm = sum(values) / len(values)
-        std_norm = (sum((n - mean_norm)**2 for n in values) / len(values)) ** 0.5
-        return {
-            "min": min(values),
-            "max": max(values),
-            "mean": mean_norm,
-            "std": std_norm,
-        }
-        
-    def flatten_dict(self, d, parent_key="", sep="/"):
-        items = {}
-        for k, v in d.items():
-            new_key = f"{parent_key}{sep}{k}" if parent_key else k
-            if isinstance(v, dict):
-                items.update(self.flatten_dict(v, new_key, sep=sep))
-            else:
-                items[new_key] = v
-        return items
-
-    def on_before_optimizer_step(self, optimizer):
-        log_dict = {
-            "encoder_g2m_gnn": self.compute_layer_stats(self.encoder.g2m_gnn),
-            "encoder_mesh_up_gnns": self.compute_layer_stats(self.encoder.mesh_up_gnns),
-            "encoder_intra_level_gnns": self.compute_layer_stats(self.encoder.intra_level_gnns),
-            "encoder_latent_param_map": self.compute_layer_stats(self.encoder.latent_param_map),
-            "decoder_g2m_gnn": self.compute_layer_stats(self.decoder.g2m_gnn),
-            "decoder_m2g_gnn": self.compute_layer_stats(self.decoder.m2g_gnn),
-            "decoder_intra_up_gnns": self.compute_layer_stats(self.decoder.intra_up_gnns),
-            "decoder_intra_down_gnns": self.compute_layer_stats(self.decoder.intra_down_gnns),
-            "decoder_mesh_up_gnns": self.compute_layer_stats(self.decoder.mesh_up_gnns),
-            "decoder_mesh_down_gnns": self.compute_layer_stats(self.decoder.mesh_down_gnns),
-            "decoder_param_map": self.compute_layer_stats(self.decoder.param_map),
-        }
-        flat_log_dict = self.flatten_dict(log_dict)
-        self.log_dict(flat_log_dict)
 
 
     def embedd_all(self, high_res, low_res):
@@ -363,7 +313,7 @@ class GraphEFM_mask(ARModel):
         var_dist, pred_mean, _ = self.encode_sample_decode(high_res_grid_emb, graph_emb, ids_restore)
         loss, mse_per_var, kl_term = self.compute_loss(pred_mean, high_res, var_dist, mask)
         
-        """
+        
         log_dict = {
             "train_loss": loss,
             "train_kl_div": kl_term,
@@ -375,7 +325,7 @@ class GraphEFM_mask(ARModel):
         self.log_dict(
             log_dict, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True
         )
-        """
+        
         return loss
         
 
@@ -393,12 +343,12 @@ class GraphEFM_mask(ARModel):
         
         # Log loss per time step forward and mean
         val_log_dict = {
-            "val_loss": val_loss#,
-            #"val_kl_div": kl_term,
-            #**{
-            #    f"val_MSE_{constants.PARAM_NAMES_SHORT_CERRA[var_i]} {constants.PARAM_UNITS_CERRA[var_i]}": val_mse_per_var[var_i]
-            #    for var_i in range(len(val_mse_per_var))
-            #},
+            "val_loss": val_loss,
+            "val_kl_div": kl_term,
+            **{
+                f"val_MSE_{constants.PARAM_NAMES_SHORT_CERRA[var_i]} {constants.PARAM_UNITS_CERRA[var_i]}": val_mse_per_var[var_i]
+                for var_i in range(len(val_mse_per_var))
+            },
         }
         self.log_dict(
             val_log_dict, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True
