@@ -54,10 +54,12 @@ class GraphEFM_mask(ARModel):
                 
         # Embedders
         # Assume all levels have same static feature dimensionality
-        mesh_dim = self.mesh_static_features[1].shape[1] #first mesh features has shape (6561, 4) since it represent the era5 grid. The other meshes have shape (x, 2). There is a dedicated ambedder for the first mesh. This code should be modified to take into account the different shapes of the mesh features.
+        mesh_dim = self.mesh_static_features[1].shape[1] #first mesh features has shape (6561, 3) since it represent the era5 grid. The other meshes have shape (x, 2). There is a dedicated ambedder for the first mesh. This code should be modified to take into account the different shapes of the mesh features.
         m2m_dim = self.m2m_features[0].shape[1]
         mesh_up_dim = self.mesh_up_features[0].shape[1]
         mesh_down_dim = self.mesh_down_features[0].shape[1]
+        
+        self.mesh_grid_emb = utils.make_mlp([self.grid_static_dim] + self.mlp_blueprint_end)
         
         if args.dataset_era5 is None or args.dataset_cerra is None:
             #first embedder has to project 2 features, as the first mesh is just a projection of the original grid
@@ -223,6 +225,9 @@ class GraphEFM_mask(ARModel):
                 self.mesh_down_embedders, self.mesh_down_features
             )
         ]
+        
+        graph_emb["mesh_grid"] = self.expand_to_batch(self.mesh_grid_emb(self.grid_static_features), batch_size)
+        
 
         return high_res_grid_emb, graph_emb, mask, ids_restore
 

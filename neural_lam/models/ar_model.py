@@ -58,8 +58,8 @@ class ARModel(pl.LightningModule):
             self.grid_output_dim = constants.GRID_STATE_DIM_CERRA  # Pred. dim. in grid cell
 
         # grid_dim from data + static
-        self.num_grid_nodes, grid_static_dim = self.grid_static_features.shape  # 63784 = 268x238
-        self.grid_dim = constants.GRID_STATE_DIM_CERRA + grid_static_dim
+        self.num_grid_nodes, self.grid_static_dim = self.grid_static_features.shape  # 63784 = 268x238
+        self.grid_dim = constants.GRID_STATE_DIM_CERRA + self.grid_static_dim
 
         # Instantiate loss function
         self.loss = metrics.get_metric(args.loss)
