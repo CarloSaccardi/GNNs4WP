@@ -177,10 +177,11 @@ class GraphEFM_mask(ARModel):
             dim=-1,
         )  # (B, num_grid_nodes, grid_dim)
         high_res_grid_emb = self.high_res_embedder(high_res_grid_features)
+        high_res_grid_emb = high_res_grid_emb + self.pos_embed
         # Masking
         if self.mask_ratio is not None:
-            mask, ids_restore, g2m_features, g2m_edge_index = mask_utils.masking(high_res_grid_emb, 
-                                                                                 self.pos_embed, 
+            high_res_grid_emb, mask, ids_restore, g2m_features, g2m_edge_index = mask_utils.masking(high_res_grid_emb, 
+                                                                                 #self.pos_embed, 
                                                                                  self.g2m_edge_index, 
                                                                                  self.g2m_features,
                                                                                  self.mask_ratio,
@@ -258,7 +259,7 @@ class GraphEFM_mask(ARModel):
 
         if ids_restore is not None:
             # Compute reconstruction (decoder)        
-            mask_tokens = self.mask_token.repeat(high_res_emb.shape[0], ids_restore.shape[1] + 1 - high_res_emb.shape[1], 1)
+            mask_tokens = self.mask_token.repeat(high_res_emb.shape[0], ids_restore.shape[1] - high_res_emb.shape[1], 1)
             x_ = torch.cat([high_res_emb, mask_tokens], dim=1)
             x_ = torch.gather(x_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, high_res_emb.shape[2]))  # unshuffle
             full_grid_rep = x_ + self.decoder_pos_embed

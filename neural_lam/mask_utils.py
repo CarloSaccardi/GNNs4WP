@@ -1,9 +1,9 @@
 import torch
 
-def masking(grid_emb,pos_embed, g2m_edge_index, g2m_features, mask_ratio, grid_size, block_size):
+def masking(grid_emb, g2m_edge_index, g2m_features, mask_ratio, grid_size, block_size):
     #### Masking ####
-    grid_emb = grid_emb + pos_embed
-    grid_emb, mask, ids_restore, ids_keep = block_random_masking(grid_emb, mask_ratio, grid_size, block_size)
+    #grid_emb = grid_emb + pos_embed
+    grid_emb_masked, mask, ids_restore, ids_keep = block_random_masking(grid_emb, mask_ratio, grid_size, block_size)
     keep_uniques = torch.unique(ids_keep[0]) + g2m_edge_index[0,0]
     senders = g2m_edge_index[0]
     mask_edges = torch.isin(senders, keep_uniques)
@@ -25,7 +25,7 @@ def masking(grid_emb,pos_embed, g2m_edge_index, g2m_features, mask_ratio, grid_s
     reindexed_senders = torch.tensor([sender_mapping[sender.item()] for sender in g2m_edge_index[0]])
     g2m_edge_index[0] = reindexed_senders
     
-    return mask, ids_restore, g2m_features, g2m_edge_index
+    return grid_emb_masked, mask, ids_restore, g2m_features, g2m_edge_index
 
 
 def block_random_masking(x, mask_ratio, grid_size, block_size):

@@ -80,5 +80,5 @@ tags
 figures/*
 *.out
 
-configs/*
+*.yaml
 DebugLogs/*
