@@ -80,6 +80,9 @@ tags
 figures/*
 *.out
 
+configs/*
+bash_files/*
+
 
 DebugLogs/*
 
