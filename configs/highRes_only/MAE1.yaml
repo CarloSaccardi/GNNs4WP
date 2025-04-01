@@ -34,7 +34,7 @@ lr: 0.001
 val_interval: 1
 
 eval: null
-mask_ratio: 5
+mask_ratio: 0.05
 masking_block_size: 20
 wandb_project: neural-lam-HighResOnly
 

@@ -79,9 +79,6 @@ tags
 .cdsapirc
 figures/*
 *.out
-*.yaml
-
-configs/*
 
 
 DebugLogs/*
