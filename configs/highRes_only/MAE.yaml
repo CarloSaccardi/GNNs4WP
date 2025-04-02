@@ -1,9 +1,9 @@
 
-dataset_cerra: "/projects/0/prjs0951/MASK_GNN_DATA/CERRA_interpolated_300x300"
+dataset_cerra: "/projects/0/prjs1154/MASK_GNN_DATA/CERRA_interpolated_300x300"
 dataset_era5: null #"/projects/0/prjs0951/MASK_GNN_DATA/ERA5_60_n2_40_18"
 graph: "hierarchical_highRes_only"
 
-run_name: KL_O_HighResOnly_20
+run_name: KL_0_HighResOnly_20_fix
 
 model: "graph_efm"
 subset_ds: 0
@@ -36,7 +36,7 @@ val_interval: 1
 eval: null
 mask_ratio: null
 masking_block_size: 20
-wandb_project: neural-lam-HighResOnly
+wandb_project: neural-lam-HighResOnly-fix
 
 kl_term: 1
 kl_beta: 0.01

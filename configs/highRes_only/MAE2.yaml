@@ -1,16 +1,16 @@
 
-dataset_cerra: "/aspire/CarloData/MASK_GNN_DATA/CERRA_interpolated_300x300"
+dataset_cerra: "/projects/0/prjs1154/MASK_GNN_DATA/CERRA_interpolated_300x300"
 dataset_era5: null #"/projects/0/prjs0951/MASK_GNN_DATA/ERA5_60_n2_40_18"
 graph: "hierarchical_highRes_only"
 
-run_name: KL_25_HighResOnly_20
+run_name: KL_25_HighResOnly_50_fix
 
 model: "graph_efm"
 subset_ds: 0
 seed: 42
 n_workers: 8
 epochs: 200
-batch_size: 8
+batch_size: 16
 
 load: null
 restore_opt: 0
@@ -34,9 +34,9 @@ lr: 0.001
 val_interval: 1
 
 eval: null
-mask_ratio: 25
-masking_block_size: 20
-wandb_project: neural-lam-HighResOnly
+mask_ratio: 0.25
+masking_block_size: 50
+wandb_project: neural-lam-HighResOnly-fix
 
 kl_term: 1
 kl_beta: 0.01
