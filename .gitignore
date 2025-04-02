@@ -80,5 +80,6 @@ tags
 figures/*
 *.out
 
-*.yaml
+configs/*
+bash_files/*
 DebugLogs/*
