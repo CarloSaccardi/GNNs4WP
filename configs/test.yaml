@@ -1,16 +1,17 @@
+dataset_cerra: "/projects/0/prjs1154/MASK_GNN_DATA/CERRA_interpolated_300x300"
+dataset_era5: null #"/projects/0/prjs0951/MASK_GNN_DATA/ERA5_60_n2_40_18"
+graph: "hierarchical_highRes_only"
 
-dataset_cerra: "/projects/0/prjs0951/MASK_GNN_DATA/CERRA_interpolated_300x300"
-dataset_era5: "/projects/0/prjs0951/MASK_GNN_DATA/ERA5_60_n2_40_18"
-graph: "hierarchical_HighLow_res"
+run_name: KL_75_HighResOnly_50_fix_eval
 
 model: "graph_efm"
 subset_ds: 0
 seed: 42
 n_workers: 8
 epochs: 200
-batch_size: 8
+batch_size: 16
 
-load: "saved_models/graph_efm-4x64-03_04_19-3294/min_val_loss.ckpt"
+load: "saved_models/KL_75_HighResOnly_50_fix-graph_efm-4x64-04_01_16-4040"
 restore_opt: 0
 precision: "16-mixed"
 
@@ -32,9 +33,9 @@ lr: 0.001
 val_interval: 1
 
 eval: val
-mask_ratio: 0.50
+mask_ratio: 0.75
 masking_block_size: 50
-wandb_project: null #neural-lam
+wandb_project: null #neural-lam-HighResOnly-fix
 
 kl_term: 1
 kl_beta: 0.01
