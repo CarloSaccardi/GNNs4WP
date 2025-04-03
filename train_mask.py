@@ -192,6 +192,12 @@ def get_args():
         help="Loss function to use, see metric.py (default: wmse)",
     )
     parser.add_argument(
+        "--masked_loss",
+        type=bool,
+        default=False,
+        help="If the loss should be masked (default: False)",
+    )
+    parser.add_argument(
         "--step_length",
         type=int,
         default=3,

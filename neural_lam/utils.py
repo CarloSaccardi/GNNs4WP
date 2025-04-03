@@ -375,7 +375,7 @@ def compute_MSE_entiregrid(prediction, targets):
     mse_batches = squared_error.mean(dim=1)
     #mse_per_var = mse_batches.mean(dim=0)
     
-    return mse_batches, mse_batches.mean(dim=0)
+    return mse_batches.mean(), mse_batches.mean(dim=0)
 
 def compute_MSE_masked(prediction, targets, mask):
 
@@ -402,7 +402,7 @@ def compute_MAE_entiregrid(prediction, targets):
     mae_batches = absolute_error.mean(dim=1)
     #mae_per_var = mae_batches.mean(dim=0)
     
-    return mae_batches, mae_batches.mean(dim=0)
+    return mae_batches.mean(), mae_batches.mean(dim=0)
 
 
 def compute_MAE_masked(prediction, targets, mask):

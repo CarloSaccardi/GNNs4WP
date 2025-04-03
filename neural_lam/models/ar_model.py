@@ -33,6 +33,7 @@ class ARModel(pl.LightningModule):
             else:
                 setattr(self, name, attr_value)
         # Specify dimensions of data
+        self.masked_loss = args.masked_loss
         self.mask_ratio = args.mask_ratio
         self.masking_block_size = args.masking_block_size
         self.g2m_dim = self.g2m_features.shape[1]
