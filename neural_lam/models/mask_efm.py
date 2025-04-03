@@ -285,15 +285,21 @@ class GraphEFM_mask(ARModel):
         else:
         """
         squared_error = (prediction - target) ** 2
-        mse_batches = squared_error.mean(dim=1)
-        mse_per_var = mse_batches.mean(dim=0)
-        mse = mse_batches.mean()
+        #mse_batches = squared_error.mean(dim=1)
+        #mse_per_var = mse_batches.mean(dim=0)
+        #mse = mse_batches.mean()
         
+        loss = squared_error.mean(dim=-1)
+        loss = (loss * mask).sum() / mask.sum()
+        
+        sq_e = squared_error * mask                             #Remove
+        mse_batches = sq_e.sum(dim=1) / sq_e.sum(dim=1)         #Remove
+        mse_per_var = mse_batches.mean(dim=0)                   #Remove
         # Compute KL divergence
         standard_normal = tdists.Normal(torch.zeros_like(latent_dist.loc), torch.ones_like(latent_dist.scale))
         kl_div = tdists.kl.kl_divergence(latent_dist, standard_normal).sum(dim=-1).mean()
         
-        train_loss = mse + kl_div * self.kl_beta
+        train_loss = loss + kl_div * self.kl_beta
         
         return train_loss, mse_per_var, kl_div
 
