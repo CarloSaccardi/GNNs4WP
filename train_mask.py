@@ -16,7 +16,7 @@ from neural_lam.weather_dataset import ERA5toCERRA, ERA5toCERRA2
 import os
 import yaml
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+#os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 MODELS = {
     "graphcast": GraphCast,
@@ -272,8 +272,8 @@ def main(args):
 
     # Get an (actual) random run id as a unique identifier
     random_run_id = random.randint(0, 9999)
-    N_GPUS = len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
-    print(f"Using {N_GPUS} GPUs")
+    devices = len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+    print(f"Using {devices} GPUs")
 
     # Set seed
     seed.seed_everything(args.seed)
@@ -364,7 +364,7 @@ def main(args):
         deterministic=True,
         strategy=strategy,
         accelerator=device_name,
-        #devices=2,
+        #devices=devices,
         logger=logger,
         log_every_n_steps=1,
         callbacks=callbacks,
