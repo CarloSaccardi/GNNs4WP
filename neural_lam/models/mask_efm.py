@@ -25,6 +25,10 @@ class GraphEFM_mask(ARModel):
         
         self.test_MSEs = []
         self.test_MAEs = []
+        self.test_MSEs_masked = []
+        self.test_MAEs_masked = []
+        
+        self.run_name = args.run_name
 
         # Define sub-models
         # Feature embedders for grid
@@ -426,13 +430,19 @@ class GraphEFM_mask(ARModel):
         
         high_res_grid_emb, graph_emb, mask, ids_restore = self.embedd_all(high_res, low_res)
         var_dist, prediction, _ = self.encode_sample_decode(high_res_grid_emb, graph_emb, ids_restore)
+        
         test_MSE, _ = utils.compute_MSE_entiregrid(prediction, high_res)
         test_MAE, _ = utils.compute_MAE_entiregrid(prediction, high_res)
+        test_MSE_masked, _ = utils.compute_MSE_masked(prediction, high_res, mask)
+        test_MAE_masked, _ = utils.compute_MAE_masked(prediction, high_res, mask)
+        
         
         self.test_MSEs.append(test_MSE)
         self.test_MAEs.append(test_MAE)
+        self.test_MSEs_masked.append(test_MSE_masked)
+        self.test_MAEs_masked.append(test_MAE_masked)
         
-        return {"test_MSE": test_MSE, "test_MAE": test_MAE}
+        return {"test_MSE": test_MSE, "test_MAE": test_MAE, "test_MSE_masked": test_MSE_masked, "test_MAE_masked": test_MAE_masked}
 
 
 
@@ -440,12 +450,17 @@ class GraphEFM_mask(ARModel):
         """
         Called at the end of the testing epoch to aggregate results.
         """
-        test_MSE_mean = torch.cat(self.test_MSEs, dim=0).mean()
-        test_MAE_mean = torch.cat(self.test_MAEs, dim=0).mean()
+        test_MSE_mean = sum(self.test_MSEs) / len(self.test_MSEs)
+        test_MAE_mean = sum(self.test_MAEs) / len(self.test_MAEs)
+        test_MSE_masked_mean = sum(self.test_MSEs_masked) / len(self.test_MSEs_masked)
+        test_MAE_masked_mean = sum(self.test_MAEs_masked) / len(self.test_MAEs_masked)
         
         self.log("test_MSE_mean", test_MSE_mean)
         self.log("test_MAE_mean", test_MAE_mean)
+        self.log("test_MSE_masked_mean", test_MSE_masked_mean)
+        self.log("test_MAE_masked_mean", test_MAE_masked_mean)
         print(f"Mean Test MSE: {test_MSE_mean}, Mean Test MAE: {test_MAE_mean}")
+        print(f"Mean Test MSE masked: {test_MSE_masked_mean}, Mean Test MAE masked: {test_MAE_masked_mean}")
         
         
         
