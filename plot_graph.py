@@ -1,213 +1,120 @@
-# Standard library
-from argparse import ArgumentParser
-
-# Third-party
+import matplotlib.pyplot as plt
 import numpy as np
-import plotly.graph_objects as go
-import torch_geometric as pyg
 
-# First-party
-from neural_lam import utils
+# Mask ratios representing the models (from both the Full Loss Table and Masked Loss table)
+mask_ratios = ["5", "25", "50", "75", "100"]
 
-MESH_HEIGHT = 0.1
-MESH_LEVEL_DIST = 0.2
-GRID_HEIGHT = 0
+# Full Loss Table values (rounded to 4-digit accuracy)
+full_loss_test_mse         = [0.0035, 0.0149, 0.0301, 0.0446, 0.0606]
+full_loss_test_mae         = [0.0169, 0.0469, 0.0837, 0.1202, 0.1579]
+full_loss_test_mse_masked  = [0.0669, 0.0588, 0.0599, 0.0593, 0.0606]
+full_loss_test_mae_masked  = [0.1677, 0.1551, 0.1558, 0.1552, 0.1579]
 
+# Masked Loss table values (rounded to 4-digit accuracy)
+masked_loss_test_mse       = [0.0772, 0.0692, 0.0660, 0.0629, 0.0606]
+masked_loss_test_mae       = [0.1818, 0.1689, 0.1660, 0.1611, 0.1579]
+masked_loss_test_mse_masked= [0.0739, 0.0648, 0.0630, 0.0612, 0.0606]
+masked_loss_test_mae_masked= [0.1782, 0.1635, 0.1617, 0.1589, 0.1579]
 
-def main():
-    """
-    Plot graph structure in 3D using plotly
-    """
-    parser = ArgumentParser(description="Plot graph")
-    parser.add_argument(
-        "--dataset",
-        type=str,
-        default="meps_example",
-        help="Datast to load grid coordinates from (default: meps_example)",
-    )
-    parser.add_argument(
-        "--graph",
-        type=str,
-        default="multiscale",
-        help="Graph to plot (default: multiscale)",
-    )
-    parser.add_argument(
-        "--save",
-        type=str,
-        help="Name of .html file to save interactive plot to (default: None)",
-    )
-    parser.add_argument(
-        "--show_axis",
-        type=int,
-        default=0,
-        help="If the axis should be displayed (default: 0 (No))",
-    )
+# For masked plots additional bilinear bar values:
+masked_bilinear_mse = [0.09110, 0.0963, 0.0938, 0.0937, 0.0939]
+masked_bilinear_mae = [0.1891, 0.1924, 0.1902, 0.1903, 0.1905]
 
-    args = parser.parse_args()
+# Function to plot two bars with a horizontal red dashed bilinear line.
+def plot_grouped_bar_with_line(mask_ratios, data_full, data_masked, bilinear_val, metric_name):
+    n = len(mask_ratios)
+    x = np.arange(n)      # x-axis positions for each category
+    width = 0.35          # width for each bar
 
-    # Load graph data
-    hierarchical, graph_ldict = utils.load_graph(args.graph)
-    (
-        g2m_edge_index,
-        m2g_edge_index,
-        m2m_edge_index,
-    ) = (
-        graph_ldict["g2m_edge_index"],
-        graph_ldict["m2g_edge_index"],
-        graph_ldict["m2m_edge_index"],
-    )
-    mesh_up_edge_index, mesh_down_edge_index = (
-        graph_ldict["mesh_up_edge_index"],
-        graph_ldict["mesh_down_edge_index"],
-    )
-    mesh_static_features = graph_ldict["mesh_static_features"]
+    fig, ax = plt.subplots(figsize=(8, 6))
 
-    grid_static_features = utils.load_static_data(args.dataset)[
-        "grid_static_features"
-    ]
+    # Plot the bar groups
+    ax.bar(x - width/2, data_full, width, color='C0', label='Full Loss')
+    ax.bar(x + width/2, data_masked, width, color='C1', label='Masked Loss')
+    
+    # Draw horizontal red dashed line for the bilinear threshold.
+    # Set zorder low so that the numbers (drawn later) appear on top.
+    ax.axhline(bilinear_val, color='red', linestyle='--', label='Bilinear', zorder=0)
 
-    # Extract values needed, turn to numpy
-    grid_pos = grid_static_features[:, :2].numpy()
-    # Add in z-dimension
-    z_grid = GRID_HEIGHT * np.ones((grid_pos.shape[0],))
-    grid_pos = np.concatenate(
-        (grid_pos, np.expand_dims(z_grid, axis=1)), axis=1
-    )
+    # Compute an offset based on the highest value among the bars and bilinear value
+    max_val = max(max(data_full), max(data_masked), bilinear_val)
+    offset = 0.05 * max_val if max_val != 0 else 0.005
 
-    # List of edges to plot, (edge_index, color, line_width, label)
-    edge_plot_list = [
-        (m2g_edge_index.numpy(), "black", 0.4, "M2G"),
-        (g2m_edge_index.numpy(), "black", 0.4, "G2M"),
-    ]
+    # Set y-limit to provide extra space above the highest element
+    ax.set_ylim(0, max_val + 2 * offset)
 
-    # Mesh positioning and edges to plot differ if we have a hierarchical graph
-    if hierarchical:
-        mesh_level_pos = [
-            np.concatenate(
-                (
-                    level_static_features.numpy(),
-                    MESH_HEIGHT
-                    + MESH_LEVEL_DIST
-                    * height_level
-                    * np.ones((level_static_features.shape[0], 1)),
-                ),
-                axis=1,
-            )
-            for height_level, level_static_features in enumerate(
-                mesh_static_features, start=1
-            )
-        ]
-        mesh_pos = np.concatenate(mesh_level_pos, axis=0)
+    # Annotate the bars using the computed offset so there is a consistent gap.
+    for i in range(n):
+        ax.text(x[i] - width/2, data_full[i] + offset, f'{data_full[i]:.4f}', 
+                ha='center', va='bottom', fontsize=9)
+        ax.text(x[i] + width/2, data_masked[i] + offset, f'{data_masked[i]:.4f}', 
+                ha='center', va='bottom', fontsize=9)
 
-        # Add inter-level mesh edges
-        edge_plot_list += [
-            (level_ei.numpy(), "blue", 1, f"M2M Level {level}")
-            for level, level_ei in enumerate(m2m_edge_index)
-        ]
+    ax.set_xticks(x)
+    ax.set_xticklabels(mask_ratios)
+    ax.set_xlabel("Masking Ratio (%)")
+    ax.set_ylabel(metric_name)
+    ax.set_title(metric_name)
 
-        # Add intra-level mesh edges
-        up_edges_ei = np.concatenate(
-            [level_up_ei.numpy() for level_up_ei in mesh_up_edge_index], axis=1
-        )
-        down_edges_ei = np.concatenate(
-            [level_down_ei.numpy() for level_down_ei in mesh_down_edge_index],
-            axis=1,
-        )
-        edge_plot_list.append((up_edges_ei, "green", 1, "Mesh up"))
-        edge_plot_list.append((down_edges_ei, "green", 1, "Mesh down"))
+    # Put legend above the plot.
+    ax.legend(loc='upper center', bbox_to_anchor=(0.5, 1.15), ncol=3)
 
-        mesh_node_size = 2.5
-    else:
-        mesh_pos = mesh_static_features.numpy()
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.savefig(f'{metric_name}.png', dpi=300, bbox_inches='tight')
+    plt.show()
 
-        mesh_degrees = pyg.utils.degree(m2m_edge_index[1]).numpy()
-        z_mesh = MESH_HEIGHT + 0.01 * mesh_degrees
-        mesh_node_size = mesh_degrees / 2
+# Function to plot three bars (including an extra red bar for bilinear) for the masked metrics.
+def plot_grouped_bar_with_extra_bar(mask_ratios, data_full, data_masked, data_bilinear, metric_name):
+    n = len(mask_ratios)
+    x = np.arange(n)      # positions on the x-axis for each category
+    width = 0.25          # a slightly narrower bar width to accommodate three bars
 
-        mesh_pos = np.concatenate(
-            (mesh_pos, np.expand_dims(z_mesh, axis=1)), axis=1
-        )
+    fig, ax = plt.subplots(figsize=(8, 6))
 
-        edge_plot_list.append((m2m_edge_index.numpy(), "blue", 1, "M2M"))
+    # Plot three sets of bars: Full Loss, Masked Loss, and the extra Bilinear.
+    ax.bar(x - width, data_full, width, color='C0', label='Full Loss')
+    ax.bar(x, data_masked, width, color='C1', label='Masked Loss')
+    ax.bar(x + width, data_bilinear, width, color='red', label='Bilinear')
 
-    # All node positions in one array
-    node_pos = np.concatenate((mesh_pos, grid_pos), axis=0)
+    # Compute an offset based on the maximum value among all three data sets.
+    max_val = max(max(data_full), max(data_masked), max(data_bilinear))
+    offset = 0.05 * max_val if max_val != 0 else 0.005
 
-    # Add edges
-    data_objs = []
-    for (
-        ei,
-        col,
-        width,
-        label,
-    ) in edge_plot_list:
-        edge_start = node_pos[ei[0]]  # (M, 2)
-        edge_end = node_pos[ei[1]]  # (M, 2)
-        n_edges = edge_start.shape[0]
+    # Set y-axis limit for a comfortable top margin.
+    ax.set_ylim(0, max_val + 2 * offset)
 
-        x_edges = np.stack(
-            (edge_start[:, 0], edge_end[:, 0], np.full(n_edges, None)), axis=1
-        ).flatten()
-        y_edges = np.stack(
-            (edge_start[:, 1], edge_end[:, 1], np.full(n_edges, None)), axis=1
-        ).flatten()
-        z_edges = np.stack(
-            (edge_start[:, 2], edge_end[:, 2], np.full(n_edges, None)), axis=1
-        ).flatten()
+    # Annotate each bar with its corresponding value using the computed offset.
+    for i in range(n):
+        ax.text(x[i] - width, data_full[i] + offset, f'{data_full[i]:.4f}',
+                ha='center', va='bottom', fontsize=9)
+        ax.text(x[i], data_masked[i] + offset, f'{data_masked[i]:.4f}',
+                ha='center', va='bottom', fontsize=9)
+        ax.text(x[i] + width, data_bilinear[i] + offset, f'{data_bilinear[i]:.4f}',
+                ha='center', va='bottom', fontsize=9)
 
-        scatter_obj = go.Scatter3d(
-            x=x_edges,
-            y=y_edges,
-            z=z_edges,
-            mode="lines",
-            line={"color": col, "width": width},
-            name=label,
-        )
-        data_objs.append(scatter_obj)
+    ax.set_xticks(x)
+    ax.set_xticklabels(mask_ratios)
+    ax.set_xlabel("Masking Ratio (%)")
+    ax.set_ylabel(metric_name)
+    ax.set_title(metric_name)
 
-    # Add node objects
+    # Place legend above the plot.
+    ax.legend(loc='upper center', bbox_to_anchor=(0.5, 1.15), ncol=3)
 
-    data_objs.append(
-        go.Scatter3d(
-            x=grid_pos[:, 0],
-            y=grid_pos[:, 1],
-            z=grid_pos[:, 2],
-            mode="markers",
-            marker={"color": "black", "size": 1},
-            name="Grid nodes",
-        )
-    )
-    data_objs.append(
-        go.Scatter3d(
-            x=mesh_pos[:, 0],
-            y=mesh_pos[:, 1],
-            z=mesh_pos[:, 2],
-            mode="markers",
-            marker={"color": "blue", "size": mesh_node_size},
-            name="Mesh nodes",
-        )
-    )
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.savefig(f'{metric_name}.png', dpi=300, bbox_inches='tight')
+    plt.show()
 
-    fig = go.Figure(data=data_objs)
+# Generate the four plots with improved spacing:
 
-    fig.update_layout(scene_aspectmode="data")
-    fig.update_traces(connectgaps=False)
+# 1. Test MSE with horizontal bilinear line (value 0.0939)
+plot_grouped_bar_with_line(mask_ratios, full_loss_test_mse, masked_loss_test_mse, 0.0939, 'Test MSE')
 
-    if not args.show_axis:
-        # Hide axis
-        fig.update_layout(
-            scene={
-                "xaxis": {"visible": False},
-                "yaxis": {"visible": False},
-                "zaxis": {"visible": False},
-            }
-        )
+# 2. Test MAE with horizontal bilinear line (value 0.1905)
+plot_grouped_bar_with_line(mask_ratios, full_loss_test_mae, masked_loss_test_mae, 0.1905, 'Test MAE')
 
-    if args.save:
-        fig.write_html(args.save, include_plotlyjs="cdn")
-    else:
-        fig.show()
+# 3. Test MSE masked with an extra bilinear bar
+plot_grouped_bar_with_extra_bar(mask_ratios, full_loss_test_mse_masked, masked_loss_test_mse_masked, masked_bilinear_mse, 'Test MSE masked')
 
-
-if __name__ == "__main__":
-    main()
+# 4. Test MAE masked with an extra bilinear bar
+plot_grouped_bar_with_extra_bar(mask_ratios, full_loss_test_mae_masked, masked_loss_test_mae_masked, masked_bilinear_mae, 'Test MAE masked')
