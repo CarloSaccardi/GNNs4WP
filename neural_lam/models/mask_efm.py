@@ -331,10 +331,10 @@ class GraphEFM(ARModel):
             and self.current_epoch % 10 == 0
             and self.wandb_project is not None
         ):
-            self.load_metrics_and_plots(prediction, high_res, batch_idx)
+            self.load_metrics_and_plots(prediction, high_res, batch_idx, mask=None)
             
             
-    def load_metrics_and_plots(self, prediction, high_res, mask, batch_idx):
+    def load_metrics_and_plots(self, prediction, high_res, batch_idx, mask=None):
         
         if mask is None:
             mask = torch.ones_like(high_res[:, :, 0])
