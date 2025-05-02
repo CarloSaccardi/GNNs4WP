@@ -1,283 +1,245 @@
-# Third-party
+import math
+import os
 import matplotlib.pyplot as plt
+
 import numpy as np
 import torch
-import wandb
-import math
-
-# First-party
-from neural_lam import constants, mask_utils, utils, vis
-from neural_lam.models.ar_model import ARModel
-from neural_lam.models.hi_graph_latent_decoder import HiGraphLatentDecoder
-from neural_lam.models.hi_graph_latent_encoder import HiGraphLatentEncoder
 import torch.distributions as tdists
-
+import pytorch_lightning as pl
+import wandb
 from pytorch_lightning.utilities import grad_norm
 
+from neural_lam import constants, mask_utils, utils, vis
+from neural_lam.models.ar_model import ARModel
+from neural_lam.models.hi_graph_latent_encoder import HiGraphLatentEncoder, HiGraphLatentEncoderCond
+from neural_lam.models.hi_graph_latent_decoder import HiGraphLatentDecoder
 
-class GraphEFM_mask(ARModel):
+
+class GraphEFM(ARModel):
     """
-    Graph-based Ensemble Forecasting Model
+    Graph-based Ensemble Forecasting Model with optional spatial masking.
+    Extends ARModel to encode/decode hierarchical graph latents.
     """
 
     def __init__(self, args):
         super().__init__(args)
-        
+        self.save_hyperparameters(args)
+
+        # Runtime metadata
+        self.run_name = args.run_name
+
+        # Storage for test metrics
         self.test_MSEs = []
         self.test_MAEs = []
         self.test_MSEs_masked = []
         self.test_MAEs_masked = []
-        
-        self.run_name = args.run_name
 
-        # Define sub-models
-        # Feature embedders for grid
-        self.mlp_blueprint_end = [args.hidden_dim] * (args.hidden_layers + 1)
-        self.high_res_embedder = utils.make_mlp([self.grid_dim] + self.mlp_blueprint_end)  # For states up to t-1
-        # Embedders for mesh
-        self.g2m_embedder = utils.make_mlp([self.g2m_dim] + self.mlp_blueprint_end)
-        self.m2g_embedder = utils.make_mlp([self.m2g_dim] + self.mlp_blueprint_end)
+        # Build feature embedders
+        self._init_embedders(args)
 
-        ################### Print some useful info ###################
-        print("Loaded hierarchical graph with structure:")
-        level_mesh_sizes = [mesh_feat.shape[0] for mesh_feat in self.mesh_static_features]
-        num_levels = len(self.mesh_static_features)
-        for level_index, level_mesh_size in enumerate(level_mesh_sizes):
-            same_level_edges = self.m2m_features[level_index].shape[0]
-            print(
-                f"level {level_index} - {level_mesh_size} nodes, "
-                f"{same_level_edges} same-level edges"
-            )
+        # Latent dimension (default to hidden_dim)
+        self.latent_dim = args.latent_dim or args.hidden_dim
 
-            if level_index < (num_levels - 1):
-                up_edges = self.mesh_up_features[level_index].shape[0]
-                down_edges = self.mesh_down_features[level_index].shape[0]
-                print(f"  {level_index}<->{level_index+1}")
-                print(f" - {up_edges} up edges, {down_edges} down edges")
-        ##############################################################
-                
-        # Embedders
-        # Assume all levels have same static feature dimensionality
-        mesh_dim = self.mesh_static_features[1].shape[1] #first mesh features has shape (6561, 4) since it represent the era5 grid. The other meshes have shape (x, 2). There is a dedicated ambedder for the first mesh. This code should be modified to take into account the different shapes of the mesh features.
-        m2m_dim = self.m2m_features[0].shape[1]
-        mesh_up_dim = self.mesh_up_features[0].shape[1]
-        mesh_down_dim = self.mesh_down_features[0].shape[1]
-        
-        if args.dataset_era5 is None or args.dataset_cerra is None:
-            #first embedder has to project 2 features, as the first mesh is just a projection of the original grid
-            self.mesh_embedders = torch.nn.ModuleList(
-                [
-                    utils.make_mlp([mesh_dim] + self.mlp_blueprint_end)
-                    for _ in range(num_levels)
-                ]
-            )
-        else:
-            #first embedder has to project 8 features, as the first mesh a lower resolution version of the original grid
-            self.low_res_embedder = utils.make_mlp([self.grid_dim] + self.mlp_blueprint_end)
-            self.mesh_embedders = torch.nn.ModuleList( [self.low_res_embedder] +
-                [
-                    utils.make_mlp([mesh_dim] + self.mlp_blueprint_end)
-                    for _ in range(num_levels-1)
-                ]
-            )
-        self.mesh_up_embedders = torch.nn.ModuleList(
-            [
-                utils.make_mlp([mesh_up_dim] + self.mlp_blueprint_end)
-                for _ in range(num_levels - 1)
-            ]
-        )
-        self.mesh_down_embedders = torch.nn.ModuleList(
-            [
-                utils.make_mlp([mesh_down_dim] + self.mlp_blueprint_end)
-                for _ in range(num_levels - 1)
-            ]
-        )
-        self.m2m_embedders = torch.nn.ModuleList(
-            [
-                utils.make_mlp([m2m_dim] + self.mlp_blueprint_end)
-                for _ in range(num_levels)
-            ]
-        )
-        latent_dim = (
-            args.latent_dim if args.latent_dim is not None else args.hidden_dim
-        )
-        # Prior
-        """
-        if args.learn_prior:
-            if self.hierarchical_graph:
-                self.prior_model = HiGraphLatentEncoder(
-                    latent_dim,
-                    self.g2m_edge_index,
-                    self.m2m_edge_index,
-                    self.mesh_up_edge_index,
-                    args.hidden_dim,
-                    args.prior_processor_layers,
-                    hidden_layers=args.hidden_layers,
-                    output_dist=args.prior_dist,
-                )
-            else:
-                self.prior_model = GraphLatentEncoder(
-                    latent_dim,
-                    self.g2m_edge_index,
-                    self.m2m_edge_index,
-                    args.hidden_dim,
-                    args.prior_processor_layers,
-                    hidden_layers=args.hidden_layers,
-                    output_dist=args.prior_dist,
-                )
-        else:
-            self.prior_model = ConstantLatentEncoder(
-                latent_dim,
-                self.num_mesh_nodes,
-                output_dist=args.prior_dist,
-            )
-        """
-        # Enc. + Dec.
-        # Encoder
-        self.encoder = HiGraphLatentEncoder(
-            latent_dim,
-            self.g2m_edge_index,
-            self.m2m_edge_index,
-            self.mesh_up_edge_index,
-            args.hidden_dim,
-            args.encoder_processor_layers,
+        #Cond. + Enc. + Dec
+        #Conditioner
+        self.conditioner = HiGraphLatentEncoder(
+            latent_dim=self.latent_dim,
+            g2m_edge_index=self.g2m_edge_index_lr,
+            m2m_edge_index=self.m2m_edge_index_lr,
+            mesh_up_edge_index=self.mesh_up_edge_index_lr,
+            hidden_dim=args.hidden_dim,
+            intra_level_layers=args.encoder_processor_layers,
             hidden_layers=args.hidden_layers,
             output_dist="diagonal",
         )
+
+        #Encoder
+        self.encoder = HiGraphLatentEncoderCond(
+            latent_dim=self.latent_dim,
+            g2m_edge_index=self.g2m_edge_index_hr,
+            m2m_edge_index=self.m2m_edge_index_hr,
+            mesh_up_edge_index=self.mesh_up_edge_index_hr,
+            hidden_dim=args.hidden_dim,
+            intra_level_layers=args.encoder_processor_layers,
+            hidden_layers=args.hidden_layers,
+            output_dist="diagonal",
+            conditioner=self.conditioner,
+        )
+
         # Decoder
         self.decoder = HiGraphLatentDecoder(
-            self.g2m_edge_index,
-            self.m2m_edge_index,
-            self.m2g_edge_index,
-            self.mesh_up_edge_index,
-            self.mesh_down_edge_index,
-            args.hidden_dim,
-            latent_dim,
-            args.processor_layers,
+            g2m_edge_index=self.g2m_edge_index_hr,
+            m2g_edge_index=self.m2g_edge_index_hr,
+            m2m_edge_index=self.m2m_edge_index_hr,
+            mesh_down_edge_index=self.mesh_down_edge_index_hr,
+            mesh_up_edge_index=self.mesh_up_edge_index_hr,
+            hidden_dim=args.hidden_dim,
+            latent_dim=self.latent_dim,
+            intra_level_layers=args.processor_layers,
             hidden_layers=args.hidden_layers,
             output_std=bool(args.output_std),
         )
 
-
-    def embedd_all(self, high_res, low_res):
+    def _init_embedders(self, args):
         """
-        embed all node and edge representations
+        Create MLP embedders for grid, graph, and mesh features at both resolutions.
+        """
+        blueprint = [args.hidden_dim] * (args.hidden_layers + 1)
 
-        prev_state: (B, num_grid_nodes, feature_dim), X_t
-        prev_prev_state: (B, num_grid_nodes, feature_dim), X_{t-1}
-        forcing: (B, num_grid_nodes, forcing_dim)
+        # Grid embedders
+        self.high_res_embedder = utils.make_mlp([self.grid_dim_hr, *blueprint])
+        self.low_res_embedder = utils.make_mlp([self.grid_dim_lr, *blueprint])
+        self.high_res_static_embedder = utils.make_mlp([self.grid_dim_hr_static, *blueprint])
+
+        # Graph embedders
+        self.g2m_embedder_hr = utils.make_mlp([self.g2m_dim_hr, *blueprint])
+        self.m2g_embedder_hr = utils.make_mlp([self.m2g_dim_hr, *blueprint])
+        self.g2m_embedder_lr = utils.make_mlp([self.g2m_dim_lr, *blueprint])
+
+        # Mesh-level embedders
+        self.mesh_embedders_hr = self._make_level_embedders(
+            self.mesh_features_hr, blueprint
+        )
+        self.mesh_embedders_lr = self._make_level_embedders(
+            self.mesh_features_lr, blueprint
+        )
+
+        # Mesh up/down embedders
+        self.mesh_up_embedders_hr = self._make_level_embedders(
+            self.mesh_up_features_hr, blueprint
+        )
+        self.mesh_up_embedders_lr = self._make_level_embedders(
+            self.mesh_up_features_lr, blueprint
+        )
+        self.mesh_down_embedders_hr = self._make_level_embedders(
+            self.mesh_down_features_hr, blueprint
+        )
+
+        # m2m embedders
+        self.m2m_embedders_hr = self._make_level_embedders(
+            self.m2m_features_hr, blueprint
+        )
+        self.m2m_embedders_lr = self._make_level_embedders(
+            self.m2m_features_lr, blueprint
+        )
+
+    def _make_level_embedders(
+        self,
+        feature_list: list[torch.Tensor],
+        blueprint: list[int],
+    ) -> torch.nn.ModuleList:
+        """
+        Generate an MLP embedder for each level of features.
+
+        Args:
+            feature_list: list of [N_i x D_i] tensors.
+            blueprint: list of hidden dims.
+            skip_first: if True, omit feature_list[0].
+            skip_last: if True, omit last element.
+        """
+        modules = []
+        for feat in feature_list:
+            modules.append(utils.make_mlp([feat.size(1), *blueprint]))
+        return torch.nn.ModuleList(modules)
+
+    def embed_all(self, data: torch.Tensor, resolution: str = 'hr'):
+        """
+        Embed grid and hierarchical graph features for a given resolution.
+
+        Args:
+            data: Tensor of shape (B, N, C) for resolution 'hr' or 'lr'
+            resolution: 'hr' or 'lr'
 
         Returns:
-        grid_emb: (B, num_grid_nodes, d_h)
-        graph_embedding: dict with entries of shape (B, *, d_h)
+            grid_emb: Tensor (B, N, H)
+            graph_emb: dict[str, Tensor or list[Tensor]]
         """
-        batch_size = high_res.shape[0]
-        # Embed high-res grid nodes
-        high_res_grid_features = torch.cat(
-            (
-                high_res,
-                self.expand_to_batch(self.grid_static_features, batch_size),
-            ),
-            dim=-1,
-        )  # (B, num_grid_nodes, grid_dim)
-        high_res_grid_emb = self.high_res_embedder(high_res_grid_features)
-        high_res_grid_emb = high_res_grid_emb + self.pos_embed
-        # Masking
-        if self.mask_ratio is not None:
-            high_res_grid_emb, mask, ids_restore, g2m_features, g2m_edge_index = mask_utils.masking(high_res_grid_emb, 
-                                                                                 #self.pos_embed, 
-                                                                                 self.g2m_edge_index, 
-                                                                                 self.g2m_features,
-                                                                                 self.mask_ratio,
-                                                                                 int(self.num_grid_nodes**.5),
-                                                                                 self.masking_block_size)
-            graph_emb = {"g2m_edge_index": g2m_edge_index}  # Ensure it is part of the masking block
-        else:
-            mask = ids_restore = None
-            g2m_features = self.g2m_features
-            graph_emb = {"g2m_edge_index": mask_utils.adjust_g2m_edge_index(self.g2m_edge_index)}
-        # Graph embedding
-        graph_emb.update({
-            "g2m": self.expand_to_batch(self.g2m_embedder(g2m_features), batch_size),
-            "m2g": self.expand_to_batch(self.m2g_embedder(self.m2g_features), batch_size),
-        })
-        # Embed mesh nodes
-        graph_emb["mesh"] = [
-            emb(torch.cat((low_res, self.expand_to_batch(node_static_features, batch_size)), dim=-1))
-            if (indx ==0 and low_res is not None) else self.expand_to_batch(emb(node_static_features), batch_size)
-            for indx, (emb, node_static_features) in enumerate(zip(self.mesh_embedders, self.mesh_static_features))
-        ]
-        # Embed mesh edges, in-between levels
-        graph_emb["m2m"] = [
-            self.expand_to_batch(emb(edge_feat), batch_size)
-            for emb, edge_feat in zip(
-                self.m2m_embedders, self.m2m_features
-            )
-        ]
-        #Embed mesh edges, up
-        graph_emb["mesh_up"] = [
-            self.expand_to_batch(emb(edge_feat), batch_size)
-            for emb, edge_feat in zip(
-                self.mesh_up_embedders, self.mesh_up_features
-            )
-        ]
-        #Embed mesh edges, down
-        graph_emb["mesh_down"] = [
-            self.expand_to_batch(emb(edge_feat), batch_size)
-            for emb, edge_feat in zip(
-                self.mesh_down_embedders, self.mesh_down_features
-            )
-        ]
+        
+        if resolution not in ('hr', 'lr'):
+            raise ValueError("resolution must be 'hr' or 'lr'")
+        B = data.size(0)
 
-        return high_res_grid_emb, graph_emb, mask, ids_restore
+        # Select resolution-specific modules
+        grid_embedder = getattr(self, f'{resolution}_res_embedder',
+                                self.high_res_embedder if resolution == 'hr' else self.low_res_embedder)
+        static_buf = getattr(self, f'grid_static_features_{resolution}')
+        g2m_embedder = getattr(self, f'g2m_embedder_{resolution}')
+        g2m_feats = getattr(self, f'g2m_features_{resolution}')
+        g2m_edge_idx = getattr(self, f'g2m_edge_index_{resolution}')
 
-    
+        # Grid embedding
+        grid_features = torch.cat((data, self.expand_to_batch(static_buf, B)), dim=-1)
+        grid_emb = grid_embedder(grid_features)
+
+        # Base graph embedding dict
+        graph_emb = {
+            'g2m_edge_index': mask_utils.adjust_g2m_edge_index(g2m_edge_idx),
+            'g2m': self.expand_to_batch(g2m_embedder(g2m_feats), B),
+        }
+        # HR-only m2g embedding
+        if resolution == 'hr':
+            graph_emb['m2g'] = self.expand_to_batch(
+                self.m2g_embedder_hr(self.m2g_features_hr), B
+            )
+            graph_emb["grid_static_features_hr"] = self.expand_to_batch(
+                self.high_res_static_embedder(static_buf), B
+            )
+
+        # Determine embed keys per resolution
+        keys = ['mesh', 'm2m', 'mesh_up']
+        if resolution == 'hr':
+            keys.append('mesh_down')
+
+        # Loop and embed each key
+        for key in keys:
+            emb_list = []
+            emb_mods = getattr(self, f'{key}_embedders_{resolution}', None)
+            feat_list = getattr(self, f'{key}_features_{resolution}', None)
+            if emb_mods is None or feat_list is None:
+                continue
+            for mod, feat in zip(emb_mods, feat_list):
+                emb_list.append(self.expand_to_batch(mod(feat), B))
+            graph_emb[key] = emb_list
+
+        return grid_emb, graph_emb
+
+
+
     def encode_sample_decode(
-        self, high_res_emb, graph_emb, ids_restore
+        self,
+        high_res_emb: torch.Tensor,
+        low_res_emb: torch.Tensor,
+        graph_emb_hr: dict,
+        graph_emb_lr: dict,
     ):
         """
-        Estimate (masked) likelihood using given distribution over
-        latent variables
-
-        latent_dist: distribution, (B, num_mesh_nodes, d_latent)
-        current_state: (B, num_grid_nodes, d_state)
-        last_state: (B, num_grid_nodes, d_state)
-        high_res_emb: (B, num_grid_nodes, d_state)
-        g2m_emb: (B, M_g2m, d_h)
-        m2m_emb: (B, M_m2m, d_h)
-        m2g_emb: (B, M_m2g, d_h)
-
-        Returns:
-        likelihood_term: (B,)
-        pred_mean: (B, num_grid_nodes, d_state)
-        pred_std: (B, num_grid_nodes, d_state) or (d_state,)
+        Produces a conditioned Normal distribution q(z | x_hi, x_lo).
         """
-        
-        # Compute variational approximation (encoder)
-        latent_dist = self.encoder(
-            high_res_emb, graph_emb=graph_emb
-        )  # Gaussian, (B, num_mesh_nodes, d_latent)
-        
-        # Sample from variational distribution
-        latent_samples = latent_dist.rsample()  # (B, num_mesh_nodes, d_latent)
+        # ----------------------------
+        # 1) compute the joint posterior
+        # ----------------------------
+        latent_dist, skip_in, skip_up = self.encoder(
+            high_emb=high_res_emb, 
+            low_emb=low_res_emb,
+            graph_hr=graph_emb_hr,
+            graph_lr=graph_emb_lr,
+        )
+        # latent_dist.mean: (B, N_mesh, d_latent)
+        # latent_dist.std:  (B, N_mesh, d_latent)
 
-        if ids_restore is not None:
-            # Compute reconstruction (decoder)        
-            mask_tokens = self.mask_token.repeat(high_res_emb.shape[0], ids_restore.shape[1] - high_res_emb.shape[1], 1)
-            x_ = torch.cat([high_res_emb, mask_tokens], dim=1)
-            x_ = torch.gather(x_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, high_res_emb.shape[2]))  # unshuffle
-            full_grid_rep = x_ + self.decoder_pos_embed
-        else:
-            full_grid_rep = None
+        # ----------------------------
+        # 2) sample z ~ q(z|…)
+        # ----------------------------
+        z = latent_dist.rsample()  
         
         pred_mean, model_pred_std = self.decoder(
-            high_res_emb, latent_samples, graph_emb, full_grid_rep
+            z, skip_in, skip_up, graph_emb_hr
         )  # both (B, num_grid_nodes, d_state)
 
         return latent_dist, pred_mean, model_pred_std
         
 
-    def compute_loss(self, prediction, target, latent_dist, mask):
+    def compute_loss(self, prediction, target, latent_dist):
         """
         if mask is not None:
             mask = mask.unsqueeze(-1)
@@ -288,20 +250,11 @@ class GraphEFM_mask(ARModel):
             mse = mse_batches.mean()
         else:
         """
-        if self.masked_loss:
-            n_features = prediction.shape[-1]
-            mask = mask.unsqueeze(-1)
-            mask = mask.repeat(1, 1, n_features)
-            squared_error = ((prediction - target) ** 2) * mask 
-            mse_batches = squared_error.sum(dim=1) / mask.sum(dim=1)
-            mse_per_var = mse_batches.mean(dim=0)
-            mse = mse_batches.mean()
-            
-        else:
-            squared_error = (prediction - target) ** 2
-            mse_batches = squared_error.mean(dim=1)
-            mse_per_var = mse_batches.mean(dim=0)
-            mse = mse_batches.mean()
+
+        squared_error = (prediction - target) ** 2
+        mse_batches = squared_error.mean(dim=1)
+        mse_per_var = mse_batches.mean(dim=0)
+        mse = mse_batches.mean()
         
         # Compute KL divergence
         standard_normal = tdists.Normal(torch.zeros_like(latent_dist.loc), torch.ones_like(latent_dist.scale))
@@ -323,10 +276,10 @@ class GraphEFM_mask(ARModel):
             index 0 corresponds to index 1 of init_states
         """
         high_res, low_res = batch if len(batch) == 2 else (batch, None)
-        
-        high_res_grid_emb, graph_emb, mask, ids_restore = self.embedd_all(high_res,low_res)
-        var_dist, pred_mean, _ = self.encode_sample_decode(high_res_grid_emb, graph_emb, ids_restore)
-        loss, mse_per_var, kl_term = self.compute_loss(pred_mean, high_res, var_dist, mask)
+        high_res_grid_emb, graph_emb_hr = self.embed_all(high_res, "hr")
+        low_res_grid_emb, graph_emb_lr = self.embed_all(low_res, "lr")
+        var_dist, pred_mean, _ = self.encode_sample_decode(high_res_grid_emb, low_res_grid_emb, graph_emb_hr, graph_emb_lr)
+        loss, mse_per_var, kl_term = self.compute_loss(pred_mean, high_res, var_dist)
         
         
         log_dict = {
@@ -350,10 +303,10 @@ class GraphEFM_mask(ARModel):
         """
         
         high_res, low_res = batch if len(batch) == 2 else (batch, None)
-        
-        high_res_grid_emb, graph_emb, mask, ids_restore = self.embedd_all(high_res,low_res)
-        var_dist, prediction, _ = self.encode_sample_decode(high_res_grid_emb, graph_emb, ids_restore)
-        val_loss, val_mse_per_var, kl_term = self.compute_loss(prediction, high_res, var_dist, mask)
+        high_res_grid_emb, graph_emb_hr = self.embed_all(high_res, "hr")
+        low_res_grid_emb, graph_emb_lr = self.embed_all(low_res, "lr")
+        var_dist, prediction, _ = self.encode_sample_decode(high_res_grid_emb, low_res_grid_emb, graph_emb_hr, graph_emb_lr)
+        val_loss, val_mse_per_var, kl_term = self.compute_loss(prediction, high_res, var_dist)
         
         
         # Log loss per time step forward and mean
@@ -378,7 +331,7 @@ class GraphEFM_mask(ARModel):
             and self.current_epoch % 10 == 0
             and self.wandb_project is not None
         ):
-            self.load_metrics_and_plots(prediction, high_res, mask, batch_idx)
+            self.load_metrics_and_plots(prediction, high_res, batch_idx)
             
             
     def load_metrics_and_plots(self, prediction, high_res, mask, batch_idx):
@@ -428,7 +381,7 @@ class GraphEFM_mask(ARModel):
         """
         high_res, low_res = batch if len(batch) == 2 else (batch, None)
         
-        high_res_grid_emb, graph_emb, mask, ids_restore = self.embedd_all(high_res, low_res)
+        high_res_grid_emb, graph_emb, mask, ids_restore = self.embed_all(high_res, low_res)
         var_dist, prediction, _ = self.encode_sample_decode(high_res_grid_emb, graph_emb, ids_restore)
         
         test_MSE, _ = utils.compute_MSE_entiregrid(prediction, high_res)
@@ -462,6 +415,12 @@ class GraphEFM_mask(ARModel):
         print(f"Mean Test MSE: {test_MSE_mean}, Mean Test MAE: {test_MAE_mean}")
         print(f"Mean Test MSE masked: {test_MSE_masked_mean}, Mean Test MAE masked: {test_MAE_masked_mean}")
         
+        
+    def on_after_backward(self) -> None:
+        for name, p in self.named_parameters():
+            # only look at things you intended to learn
+            if p.requires_grad and p.grad is None:
+                print(f"[UNUSED] {name}") 
         
         
         

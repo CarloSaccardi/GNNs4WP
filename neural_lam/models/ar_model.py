@@ -1,102 +1,97 @@
-# Standard library
 import os
 
-# Third-party
-import matplotlib.pyplot as plt
-import numpy as np
-import pytorch_lightning as pl
 import torch
-from neural_lam.utils import get_2d_sincos_pos_embed
+import pytorch_lightning as pl
 
-# First-party
-from neural_lam import constants, metrics, utils, vis
+from neural_lam import constants, metrics, utils
 
 
 class ARModel(pl.LightningModule):
     """
-    Generic auto-regressive weather model.
-    Abstract class that can be extended.
+    Generic auto-regressive weather model. Extend for specific architectures.
     """
-
-    # pylint: disable=arguments-differ
-    # Disable to override args/kwargs from superclass
 
     def __init__(self, args):
         super().__init__()
-        
-        # Load graph with static features
-        self.hierarchical_graph, graph_ldict = utils.load_graph(args.graph)
-        for name, attr_value in graph_ldict.items():
-            # Make BufferLists module members and register tensors as buffers
-            if isinstance(attr_value, torch.Tensor):
-                self.register_buffer(name, attr_value, persistent=False)
-            else:
-                setattr(self, name, attr_value)
-        # Specify dimensions of data
-        self.masked_loss = args.masked_loss
-        self.mask_ratio = args.mask_ratio
-        self.masking_block_size = args.masking_block_size
-        self.g2m_dim = self.g2m_features.shape[1]
-        self.m2g_dim = self.m2g_features.shape[1]
+        self.save_hyperparameters(args)
+
+        # Load high- and low-resolution graphs
+        self._load_graph(args.graph_hr, suffix="_hr")
+        self._load_graph(args.graph_lr, suffix="_lr")
+
+        # Load static data features
+        self._load_static_data(args.dataset_cerra, suffix="_hr")
+        self._load_static_data(args.dataset_era5, suffix="_lr")
+
+        # Dimensions
+        self._init_dimensions()
+
+        # Training settings
         self.kl_beta = args.kl_beta
-        self.wandb_project = args.wandb_project
-        
-        self.save_hyperparameters()
         self.lr = args.lr
-        # Load static features for grid/data
-        static_data_dict = utils.load_static_data(args.dataset_cerra) if args.dataset_cerra else utils.load_static_data(args.dataset_era5)
-        for static_data_name, static_data_tensor in static_data_dict.items():
-            self.register_buffer(
-                static_data_name, static_data_tensor, persistent=False
-            )
+        self.output_std = args.output_std
+        self.step_length = args.step_length
+        self.wandb_project = args.wandb_project
 
-        # Double grid output dim. to also output std.-dev.
-        self.output_std = bool(args.output_std)
-        
+        # Output dimension (double if predicting std)
+        state_dim = constants.GRID_STATE_DIM_CERRA
+        self.grid_output_dim = state_dim * (2 if self.output_std else 1)
+
+        # Model loss and metrics
+        self.loss_fn = metrics.get_metric(args.loss)
+        self.val_metrics = {"mse": []}
+        self.test_metrics = {"mse": [], "mae": []}
         if self.output_std:
-            self.grid_output_dim = 2 * constants.GRID_STATE_DIM_CERRA  # Pred. dim. in grid cell
-        else:
-            self.grid_output_dim = constants.GRID_STATE_DIM_CERRA  # Pred. dim. in grid cell
+            self.test_metrics["output_std"] = []
 
-        # grid_dim from data + static
-        self.num_grid_nodes, grid_static_dim = self.grid_static_features.shape  # 63784 = 268x238
-        self.grid_dim = constants.GRID_STATE_DIM_CERRA + grid_static_dim
-
-        # Instantiate loss function
-        self.loss = metrics.get_metric(args.loss)
-        self.step_length = args.step_length  # Number of hours per pred. step
-
-        # For making restoring of optimizer state optional (slight hack)
+        # Optional optimizer state restore
         self.opt_state = None
 
-        # For storing spatial loss maps during evaluation
+        # For storing spatial loss maps
         self.spatial_loss_maps = []
         
-        # Add lists for val and test errors of ensemble prediction
-        self.val_metrics = {
-            "mse": [],
-        }
-        self.test_metrics = {
-            "mse": [],
-            "mae": [],
-        }
-        if self.output_std:
-            self.test_metrics["output_std"] = []  # Treat as metric
 
-        ##### MAsking parameters #####    
-        if self.mask_ratio is not None:
-            self.pos_embed = torch.nn.Parameter(torch.zeros(1, self.num_grid_nodes, args.hidden_dim), requires_grad=False)  # fixed sin-cos embedding
-            self.mask_token = torch.nn.Parameter(torch.zeros(1, 1, args.hidden_dim))
-            self.decoder_pos_embed = torch.nn.Parameter(torch.zeros(1, self.num_grid_nodes, args.hidden_dim), requires_grad=False)  # fixed sin-cos embedding
-            self.initialize_weights()
-        
-        
-    def initialize_weights(self):
-        pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], int(self.num_grid_nodes**.5), cls_token=False)
-        self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
-        decoder_pos_embed = get_2d_sincos_pos_embed(self.decoder_pos_embed.shape[-1], int(self.num_grid_nodes**.5), cls_token=False)
-        self.decoder_pos_embed.data.copy_(torch.from_numpy(decoder_pos_embed).float().unsqueeze(0))
-        torch.nn.init.normal_(self.mask_token, std=.02)
+    def _load_graph(self, graph_path: str, suffix: str):
+        graph, buffers = utils.load_graph(graph_path)
+        setattr(self, f"hierarchical_graph{suffix}", graph)
+        # which substrings to skip for the low-res case
+        skip_if_lr = ("m2g", "down")
+        for name, tensor in buffers.items():
+            # guard-clause: if we're in _lr mode and name contains any of the skip substrings
+            if suffix == "_lr" and any(sub in name for sub in skip_if_lr):
+                continue
+            buffer_name = f"{name}{suffix}"
+            if isinstance(tensor, torch.Tensor):
+                self.register_buffer(buffer_name, tensor, persistent=False)
+            else:
+                setattr(self, buffer_name, tensor)
+                
+
+    def _load_static_data(self, data_path: str, suffix: str):
+        data_dict = utils.load_static_data(data_path)
+        for name, tensor in data_dict.items():
+            buffer_name = f"{name}{suffix}"
+            self.register_buffer(buffer_name, tensor, persistent=False)
+            
+
+    def _init_dimensions(self):
+        # Graph feature dimensions
+        self.g2m_dim_hr = self.g2m_features_hr.size(1)
+        self.m2g_dim_hr = self.m2g_features_hr.size(1)
+        self.g2m_dim_lr = self.g2m_features_lr.size(1)
+
+        # Grid static features (high resolution)
+        num_nodes_hr, static_dim_hr = self.grid_static_features_hr.size()
+        self.grid_dim_hr = constants.GRID_STATE_DIM_CERRA + static_dim_hr
+        self.num_grid_nodes_hr = num_nodes_hr
+        self.grid_dim_hr_static = static_dim_hr
+
+        # Grid static features (low resolution)
+        num_nodes_lr, static_dim_lr = self.grid_static_features_lr.size()
+        self.grid_dim_lr = constants.GRID_STATE_DIM_CERRA + static_dim_lr
+        self.num_grid_nodes_lr = num_nodes_lr
+
+
 
     def configure_optimizers(self):
         opt = torch.optim.AdamW(

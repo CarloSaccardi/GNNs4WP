@@ -29,10 +29,10 @@ class HiGraphLatentDecoder(nn.Module):
     ):
         super().__init__()
 
-        # MLP for residual mapping of grid rep.
+        """# MLP for residual mapping of grid rep.
         self.grid_update_mlp = utils.make_mlp(
             [hidden_dim] * (hidden_layers + 2)
-        )
+        )"""
 
         # Embedder for latent variable
         self.latent_embedder = utils.make_mlp(
@@ -53,12 +53,12 @@ class HiGraphLatentDecoder(nn.Module):
         )
 
         # GNN from grid to mesh
-        self.g2m_gnn = InteractionNet(
+        """self.g2m_gnn = InteractionNet(
             g2m_edge_index,
             hidden_dim,
             hidden_layers=hidden_layers,
             update_edges=False,
-        )
+        )"""
         # GNN from mesh to grid
         self.m2g_gnn = PropagationNet(
             m2g_edge_index,
@@ -68,7 +68,7 @@ class HiGraphLatentDecoder(nn.Module):
         )
 
         # GNNs going up through mesh levels
-        self.mesh_up_gnns = nn.ModuleList(
+        """self.mesh_up_gnns = nn.ModuleList(
             [
                 # Note: We keep these as InteractionNets
                 InteractionNet(
@@ -79,7 +79,7 @@ class HiGraphLatentDecoder(nn.Module):
                 )
                 for edge_index in mesh_up_edge_index
             ]
-        )
+        )"""
         # GNNs going down through mesh levels
         self.mesh_down_gnns = nn.ModuleList(
             [
@@ -94,14 +94,14 @@ class HiGraphLatentDecoder(nn.Module):
         )
         # GNNs applied on intra-level in-between up and down propagation
         # Identity mappings if intra_level_layers = 0
-        self.intra_up_gnns = nn.ModuleList(
+        """self.intra_up_gnns = nn.ModuleList(
             [
                 utils.make_gnn_seq(
                     edge_index, intra_level_layers, hidden_layers, hidden_dim
                 )
                 for edge_index in m2m_edge_index
             ]
-        )
+        )"""
         self.intra_down_gnns = nn.ModuleList(
             [
                 utils.make_gnn_seq(
@@ -113,7 +113,7 @@ class HiGraphLatentDecoder(nn.Module):
         )
 
     def combine_with_latent(
-        self, original_grid_rep, latent_rep, residual_grid_rep, graph_emb
+        self, latent_emb, skip_in, skip_up, graph_emb_hr
     ):
         """
         Combine the grid representation with representation of latent variable.
@@ -127,46 +127,9 @@ class HiGraphLatentDecoder(nn.Module):
         grid_rep: (B, num_grid_nodes, d_h)
         """
         # Map to bottom mesh level
-        current_mesh_rep = self.g2m_gnn(
-            original_grid_rep, graph_emb["mesh"][0], graph_emb["g2m"], graph_emb["g2m_edge_index"]
-        )  # (B, num_mesh_nodes[0], d_h)
-
-        # Up hierarchy
-        # Run intra-level processing before propagating up
-        mesh_level_reps = []
-        m2m_level_reps = []
-        for (
-            up_gnn,
-            intra_gnn_seq,
-            mesh_up_level_rep,
-            m2m_level_rep,
-            mesh_level_rep,
-        ) in zip(
-            self.mesh_up_gnns,
-            self.intra_up_gnns[:-1],
-            graph_emb["mesh_up"],
-            graph_emb["m2m"][:-1],
-            # Last propagation up combines with latent representation
-            graph_emb["mesh"][1:-1] + [latent_rep],
-        ):  # Loop goes L-1 times, from intra-level processing at l=1 to l=L-1
-            # Run intra-level processing on level l
-            new_mesh_rep, new_m2m_rep = intra_gnn_seq(
-                current_mesh_rep, m2m_level_rep
-            )  # (B, num_mesh_nodes[l], d_h)
-
-            # Store representation for this level for downward pass
-            mesh_level_reps.append(new_mesh_rep)  # Will append L-1 times
-            m2m_level_reps.append(new_m2m_rep)
-
-            # Apply up GNN, don't need to store these reps.
-            current_mesh_rep = up_gnn(
-                new_mesh_rep, mesh_level_rep, mesh_up_level_rep
-            )  # (B, num_mesh_nodes[l], d_h)
 
         # Run intra-level processing for highest mesh level
-        current_mesh_rep, _ = self.intra_up_gnns[-1](
-            current_mesh_rep, graph_emb["m2m"][-1]
-        )  # (B, num_mesh_nodes[L], d_h)
+        rep = latent_emb
 
         # Down hierarchy
         # Propagate down before running intra-level processing
@@ -176,32 +139,53 @@ class HiGraphLatentDecoder(nn.Module):
             mesh_down_level_rep,
             m2m_level_rep,
             mesh_level_rep,
+            skip_in_,
+            skip_down_,
         ) in zip(
-            reversed(self.mesh_down_gnns),
-            reversed(self.intra_down_gnns),
-            reversed(graph_emb["mesh_down"]),
-            reversed(m2m_level_reps),  # Residual connections to up pass
-            reversed(mesh_level_reps),  # ^
+            reversed(self.mesh_down_gnns[1:]),
+            reversed(self.intra_down_gnns[1:]),
+            reversed(graph_emb_hr["mesh_down"][1:]),
+            reversed(graph_emb_hr["m2m"][1:-1]),  # Residual connections to up pass
+            reversed(graph_emb_hr["mesh"][1:-1]),  # ^
+            reversed(skip_in[1:-1]),
+            reversed(skip_up[:-1]),
         ):  # Loop goes L-1 times, from intra level processing at l=L-1 to l=1
             # Apply down GNN, don't need to store these reps.
             new_mesh_rep = down_gnn(
-                current_mesh_rep, mesh_level_rep, mesh_down_level_rep
+                rep, mesh_level_rep, mesh_down_level_rep
             )  # (B, num_mesh_nodes[l], d_h)
 
+            rep = new_mesh_rep + skip_down_  
             # Run same level processing on level l
             current_mesh_rep, _ = intra_gnn_seq(
-                new_mesh_rep, m2m_level_rep
+                rep, m2m_level_rep
             )  # (B, num_mesh_nodes[l], d_h)
+            
+            rep = current_mesh_rep + skip_in_
 
+        
+        
+        # Map to bottom mesh level. 
+        new_mesh_rep = self.mesh_down_gnns[0](
+            rep, graph_emb_hr["mesh"][0], graph_emb_hr["mesh_down"][0]
+        )  # (B, num_mesh_nodes[l], d_h)
+
+        # Run same level processing on level l
+        current_mesh_rep, _ = self.intra_down_gnns[0](
+            new_mesh_rep, graph_emb_hr["m2m"][0]
+        )  # (B, num_mesh_nodes[l], d_h)
+        
+        rep = current_mesh_rep + skip_in[0]
+        
         # Map back to grid
         grid_rep = self.m2g_gnn(
-            current_mesh_rep, residual_grid_rep, graph_emb["m2g"]
+            rep, graph_emb_hr["grid_static_features_hr"], graph_emb_hr["m2g"]
         )  # (B, num_mesh_nodes[0], d_h)
 
         return grid_rep
     
     
-    def forward(self, grid_rep, latent_samples, graph_emb, full_grid_rep = None):
+    def forward(self, latent_samples, skip_in, skip_up, graph_emb_hr):
         """
         Compute prediction (mean and std.-dev.) of next weather state
 
@@ -220,20 +204,9 @@ class HiGraphLatentDecoder(nn.Module):
         # To mesh
         latent_emb = self.latent_embedder(latent_samples)  # (B, N_mesh, d_h)
         
-        if full_grid_rep is not None:
-            # Resiudal MLP for grid representation
-            residual_grid_rep = full_grid_rep + self.grid_update_mlp(
-                full_grid_rep
-            )  # (B, num_grid_nodes, d_h)
-            
-        else:
-            # Resiudal MLP for grid representation
-            residual_grid_rep = grid_rep + self.grid_update_mlp(
-                grid_rep
-            )
 
         combined_grid_rep = self.combine_with_latent(
-            grid_rep, latent_emb, residual_grid_rep, graph_emb
+            latent_emb, skip_in, skip_up, graph_emb_hr
         )
 
         state_params = self.param_map(

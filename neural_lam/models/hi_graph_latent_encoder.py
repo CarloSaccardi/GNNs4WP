@@ -1,5 +1,7 @@
 # Third-party
 from torch import nn
+import torch.nn.functional as F
+from typing import Dict, List, Tuple
 
 # First-party
 from neural_lam import utils
@@ -74,94 +76,146 @@ class HiGraphLatentEncoder(nn.Module):
             ]
         )
 
+
+class HiGraphLatentEncoderCond(HiGraphLatentEncoder):
+    """
+    Hierarchical latent encoder with multi-scale conditioning.
+    At each graph level, sums the high-res and low-res streams before proceeding.
+    """
+
+    def __init__(
+        self,
+        *,
+        latent_dim: int,
+        g2m_edge_index,
+        m2m_edge_index,
+        mesh_up_edge_index,
+        hidden_dim: int,
+        intra_level_layers: int,
+        hidden_layers: int = 1,
+        output_dist: str = "diagonal",
+        conditioner: HiGraphLatentEncoder,    # <— pass in your LR encoder here
+    ):
+        # Initialize the “main” (HR) encoder
+        super().__init__(
+            latent_dim=latent_dim,
+            g2m_edge_index=g2m_edge_index,
+            m2m_edge_index=m2m_edge_index,
+            mesh_up_edge_index=mesh_up_edge_index,
+            hidden_dim=hidden_dim,
+            intra_level_layers=intra_level_layers,
+            hidden_layers=hidden_layers,
+            output_dist=output_dist,
+        )
+        # Store the LR encoder for conditioning
+        self.conditioner: HiGraphLatentEncoder = conditioner
+        
         # Final map to parameters
         self.latent_param_map = utils.make_mlp(
             [hidden_dim] * (hidden_layers + 1) + [self.output_dim],
             layer_norm=False,
         )
-
-    # pylint: disable-next=arguments-differ
-    def compute_dist_params(self, grid_rep, graph_emb, **kwargs):
-        """
-        Compute parameters of distribution over latent variable using the
-        grid representation
-
-        grid_rep: (B, N_grid, d_h)
-        graph_emb: dict with graph embedding vectors, entries at least
-            mesh: list of (B, N_mesh, d_h)
-            g2m: (B, M_g2m, d_h)
-            m2m: (B, M_g2m, d_h)
-            mesh_up: list of (B, N_mesh, d_h)
-
-        Returns:
-        parameters: (B, num_mesh_nodes, d_output)
-        """
-        current_mesh_rep = self.g2m_gnn(
-            grid_rep, graph_emb["mesh"][0], graph_emb["g2m"], graph_emb["g2m_edge_index"]
-        )  # (B, N_mesh, d_h)
-
-        # Run same level processing on level 0
-        current_mesh_rep, _ = self.intra_level_gnns[0](
-            current_mesh_rep, graph_emb["m2m"][0]
-        )
-
-        # Do not need to keep track of old edge or mesh reps here
-        # Go from mesh level 1 to L
-        for (
-            up_gnn,
-            intra_gnn_seq,
-            mesh_up_level_rep,
-            m2m_level_rep,
-            mesh_level_rep,
-        ) in zip(
-            self.mesh_up_gnns,
-            self.intra_level_gnns[1:],
-            graph_emb["mesh_up"],
-            graph_emb["m2m"][1:],
-            graph_emb["mesh"][1:],
-        ):
-            # Apply up GNN
-            new_node_rep = up_gnn(
-                current_mesh_rep, mesh_level_rep, mesh_up_level_rep
-            )  # (B, N_mesh[l], d_h)
-
-            # Run same level processing on level l
-            current_mesh_rep, _ = intra_gnn_seq(
-                new_node_rep, m2m_level_rep
-            )  # (B, N_mesh[l], d_h)
-
-        # At final mesh level, map to parameter dim
-        return self.latent_param_map(
-            current_mesh_rep
-        )  # (B, N_mesh[L], d_output)
         
-    def forward(self, grid_rep, **kwargs):
+        
+    def compute_dist_params_cond(
+        self,
+        high_emb: torch.Tensor,
+        low_emb: torch.Tensor,
+        graph_hr: Dict[str, List],
+        graph_lr: Dict[str, List],
+    ) -> Tuple[torch.Tensor, List[torch.Tensor], List[torch.Tensor]]:
         """
-        Compute distribution over latent variable
+        Run both HR and LR streams in lockstep, summing at each scale.
 
-        grid_rep: (B, N_grid, d_h)
-        mesh_rep: (B, N_mesh, d_h)
-        g2m_rep: (B, M_g2m, d_h)
+        Args:
+            high_emb: (B, N_grid_hr, d_h) high-res grid embeddings
+            low_emb:  (B, N_grid_lr, d_h) low-res grid embeddings
+            graph_hr: dict of HR graph features (mesh, g2m, m2m, mesh_up, mesh_down, g2m_edge_index)
+            graph_lr: dict of LR graph features (mesh, g2m, m2m, mesh_up, g2m_edge_index)
 
         Returns:
-        distribution: latent var. dist. shaped (B, N_mesh, d_latent)
+            params: (B, N_mesh_L, D_out) combined latent parameters
+            skip_ins: list of LR skip-in tensors at each level
+            skip_ups: list of LR skip-up tensors at each level
         """
-        latent_dist_params = self.compute_dist_params(grid_rep, **kwargs)
+        # Unpack HR graph features
+        hr_meshes = graph_hr['mesh']
+        hr_m2m_feats = graph_hr['m2m']
+        hr_mesh_up_feats = graph_hr['mesh_up']
+        hr_g2m = graph_hr['g2m']
+        hr_g2m_edge = graph_hr['g2m_edge_index']
+
+        # Unpack LR graph features
+        lr_meshes = graph_lr['mesh']
+        lr_m2m_feats = graph_lr['m2m']
+        lr_mesh_up_feats = graph_lr['mesh_up']
+        lr_g2m = graph_lr['g2m']
+        lr_g2m_edge = graph_lr['g2m_edge_index']
+
+        # Level 0: grid -> mesh
+        hr_rep = self.g2m_gnn(high_emb, hr_meshes[0], hr_g2m, hr_g2m_edge)
+        hr_in, _ = self.intra_level_gnns[0](hr_rep, hr_m2m_feats[0])
+        rep = hr_in + low_emb
+
+        skip_ins: List[torch.Tensor] = [low_emb]
+        skip_ups: List[torch.Tensor] = []
+
+        # Hierarchical up-propagation through levels 1..L
+        for level, (up_gnn, intra_gnn) in enumerate(
+            zip(self.mesh_up_gnns, self.intra_level_gnns[1:])
+        ):
+            # HR features for this level
+            hr_mesh = hr_meshes[level + 1]
+            hr_m2m = hr_m2m_feats[level + 1]
+            hr_up_feat = hr_mesh_up_feats[level]
+
+            # LR features for this level
+            lr_mesh = lr_meshes[level]
+            lr_m2m = lr_m2m_feats[level]
+            lr_up_feat = lr_mesh_up_feats[level - 1]
+
+            # Up-propagation
+            hr_up = up_gnn(rep, hr_mesh, hr_up_feat)
+            if level == 0:
+                lr_up = self.conditioner.g2m_gnn(
+                    low_emb, lr_meshes[0], lr_g2m, lr_g2m_edge
+                )
+            else:
+                lr_up = self.conditioner.mesh_up_gnns[level - 1](
+                    lr_in, lr_mesh, lr_up_feat
+                )
+            skip_ups.append(lr_up)
+            rep = hr_up + lr_up
+
+            # Intra-level refinement
+            hr_in, _ = intra_gnn(rep, hr_m2m)
+            lr_idx = 0 if level == 0 else level
+            lr_in, _ = self.conditioner.intra_level_gnns[lr_idx](
+                lr_up, lr_m2m
+            )
+            skip_ins.append(lr_in)
+            rep = hr_in + lr_in
+
+        # Final mapping to distribution parameters
+        params = self.latent_param_map(rep)
+        return params, skip_ins, skip_ups
+
+
+    def forward(
+        self,
+        high_emb: torch.Tensor,
+        low_emb: torch.Tensor,
+        graph_hr: dict,
+        graph_lr: dict
+    ):
+        # Compute combined params and split into (μ, σ)
+        latent_params, skip_in, skip_up = self.compute_dist_params_cond(high_emb, low_emb, graph_hr, graph_lr)
 
         if self.output_dist == "diagonal":
-            latent_mean, latent_std_raw = latent_dist_params.chunk(
-                2, dim=-1
-            )  # (B, N_mesh, d_latent) and (B, N_mesh, d_latent)
-            # pylint: disable-next=not-callable
-            latent_std = self.latent_std_eps + nn.functional.softplus(
-                latent_std_raw
-            )  # positive std.
+            mu, std_raw = latent_params.chunk(2, dim=-1)
+            std = self.latent_std_eps + F.softplus(std_raw)
         else:
-            # isotropic
-            latent_mean = latent_dist_params
-            latent_std = torch.ones_like(latent_mean)
+            mu = latent_params
+            std = torch.ones_like(mu)
 
-        return tdists.Normal(latent_mean, latent_std)
-
-
-
+        return tdists.Normal(mu, std), skip_in, skip_up

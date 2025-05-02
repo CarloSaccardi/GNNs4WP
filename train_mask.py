@@ -10,7 +10,7 @@ from lightning_fabric.utilities import seed
 
 # First-party
 from neural_lam import constants, utils
-from neural_lam.models.mask_efm import GraphEFM_mask
+from neural_lam.models.mask_efm import GraphEFM
 from neural_lam.models.graphcast import GraphCast
 from neural_lam.weather_dataset import ERA5toCERRA, ERA5toCERRA2
 import os
@@ -20,7 +20,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 MODELS = {
     "graphcast": GraphCast,
-    "graph_efm": GraphEFM_mask,
+    "graph_efm": GraphEFM,
 }
 
 
@@ -103,10 +103,17 @@ def get_args():
     )
     # Model architecture
     parser.add_argument(
-        "--graph",
+        "--graph_hr",
         type=str,
-        default="hierarchical_HighLow_res",
+        default="hierarchical_highRes_only",
         help="Graph to load and use in graph-based model "
+        "(default: multiscale)",
+    )
+    parser.add_argument(
+        "--graph_lr",
+        type=str,
+        default="hierarchical_lowRes_only",
+        help="Conditioning graph to load and use in graph-based model "
         "(default: multiscale)",
     )
     parser.add_argument(

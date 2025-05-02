@@ -198,7 +198,7 @@ def load_graph(graph_name, device="cpu"):
         "m2m_features": m2m_features,
         "mesh_up_features": mesh_up_features,
         "mesh_down_features": mesh_down_features,
-        "mesh_static_features": mesh_static_features,
+        "mesh_features": mesh_static_features,
     }
 
 
