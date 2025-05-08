@@ -1,6 +1,8 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
+
+"""
 # Mask ratios representing the models (from both the Full Loss Table and Masked Loss table)
 mask_ratios = ["5", "25", "50", "75", "100"]
 
@@ -118,3 +120,56 @@ plot_grouped_bar_with_extra_bar(mask_ratios, full_loss_test_mse_masked, masked_l
 
 # 4. Test MAE masked with an extra bilinear bar
 plot_grouped_bar_with_extra_bar(mask_ratios, full_loss_test_mae_masked, masked_loss_test_mae_masked, masked_bilinear_mae, 'Test MAE masked')
+"""
+
+mask_ratios        = ["5", "25", "50", "75", "100"]
+full_loss_test_mse = [0.0035, 0.0149, 0.0301, 0.0446, 0.0606]
+bilinear_val       = 0.0939
+
+def plot_full_loss_with_bilinear(
+    mask_ratios, data_full, bilinear_val,
+    figsize=(10, 6), bar_width=0.6,
+    title_size=18, label_size=16, tick_size=14, annot_size=14, legend_size=14
+):
+    n   = len(mask_ratios)
+    x   = np.arange(n)
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # chunky bars
+    ax.bar(x, data_full, bar_width, color='C0', label='Full Loss')
+
+    # dashed bilinear line
+    ax.axhline(bilinear_val, color='red', linestyle='--', label='Bilinear', zorder=0)
+
+    # margin for annotations
+    max_val = max(max(data_full), bilinear_val)
+    offset  = 0.05 * max_val if max_val else 0.005
+    ax.set_ylim(0, max_val + 2*offset)
+
+    # annotate with larger font
+    for i, v in enumerate(data_full):
+        ax.text(
+            x[i], v + offset, f'{v:.4f}',
+            ha='center', va='bottom', fontsize=annot_size
+        )
+
+    # styling
+    ax.set_xticks(x)
+    ax.set_xticklabels(mask_ratios, fontsize=tick_size)
+    ax.tick_params(axis='y', labelsize=tick_size)
+    ax.set_xlabel("Masking Ratio (%)", fontsize=label_size)
+    ax.set_ylabel("Test MSE", fontsize=label_size)
+    ax.set_title("Test MSE", fontsize=title_size)
+
+    # add subtle horizontal grid
+    ax.yaxis.grid(True, linestyle=':', linewidth=0.8, alpha=0.7)
+
+    # bigger legend
+    ax.legend(loc='upper center', bbox_to_anchor=(0.5, 1.12), ncol=2, fontsize=legend_size)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.show()
+
+# Call it:
+plot_full_loss_with_bilinear(mask_ratios, full_loss_test_mse, bilinear_val)

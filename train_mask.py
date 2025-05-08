@@ -11,6 +11,7 @@ from lightning_fabric.utilities import seed
 # First-party
 from neural_lam import constants, utils
 from neural_lam.models.mask_efm import GraphEFM
+from neural_lam.models.unet import UNetWrapper
 from neural_lam.models.graphcast import GraphCast
 from neural_lam.weather_dataset import ERA5toCERRA, ERA5toCERRA2
 import os
@@ -21,6 +22,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 MODELS = {
     "graphcast": GraphCast,
     "graph_efm": GraphEFM,
+    "UNet-CNN": UNetWrapper,
 }
 
 
@@ -75,15 +77,6 @@ def get_args():
         help="Number of workers in data loader (default: 4)",
     )
     parser.add_argument(
-        "--epochs",
-        type=int,
-        default=200,
-        help="upper epoch limit (default: 200)",
-    )
-    parser.add_argument(
-        "--batch_size", type=int, default=8, help="batch size (default: 4)"
-    )
-    parser.add_argument(
         "--load",
         type=str,
         help="Path to load model parameters from (default: None)",
@@ -101,126 +94,6 @@ def get_args():
         default="16-mixed",
         help="Numerical precision to use for model (32/16/bf16) (default: 32)",
     )
-    # Model architecture
-    parser.add_argument(
-        "--graph_hr",
-        type=str,
-        default="hierarchical_highRes_only",
-        help="Graph to load and use in graph-based model "
-        "(default: multiscale)",
-    )
-    parser.add_argument(
-        "--graph_lr",
-        type=str,
-        default="hierarchical_lowRes_only",
-        help="Conditioning graph to load and use in graph-based model "
-        "(default: multiscale)",
-    )
-    parser.add_argument(
-        "--hidden_dim",
-        type=int,
-        default=64,
-        help="Dimensionality of all hidden representations (default: 64)",
-    )
-    parser.add_argument(
-        "--latent_dim",
-        type=int,
-        default=None,
-        help="Dimensionality of latent R.V. at each node (if different than"
-        " hidden_dim) (default: None (same as hidden_dim))",
-    )
-    parser.add_argument(
-        "--hidden_layers",
-        type=int,
-        default=1,
-        help="Number of hidden layers in all MLPs (default: 1)",
-    )
-    parser.add_argument(
-        "--processor_layers",
-        type=int,
-        default=4,
-        help="Number of GNN layers in processor GNN (for prob. model: in "
-        "decoder) (default: 4)",
-    )
-    parser.add_argument(
-        "--encoder_processor_layers",
-        type=int,
-        default=2,
-        help="Number of on-mesh GNN layers in encoder GNN (default: 2)",
-    )
-    parser.add_argument(
-        "--prior_processor_layers",
-        type=int,
-        default=2,
-        help="Number of on-mesh GNN layers in prior GNN (default: 2)",
-    )
-    parser.add_argument(
-        "--mesh_aggr",
-        type=str,
-        default="sum",
-        help="Aggregation to use for m2m processor GNN layers (sum/mean) "
-        "(default: sum)",
-    )
-    parser.add_argument(
-        "--output_std",
-        type=int,
-        default=0,
-        help="If models should additionally output std.-dev. per "
-        "output dimensions "
-        "(default: 0 (no))",
-    )
-    parser.add_argument(
-        "--prior_dist",
-        type=str,
-        default="isotropic",
-        help="Structure of Gaussian distribution in prior network output "
-        "(isotropic/diagonal) (default: isotropic)",
-    )
-    parser.add_argument(
-        "--learn_prior",
-        type=int,
-        default=1,
-        help="If the prior should be learned as a mapping from previous state "
-        "and forcing, otherwise static with mean 0 (default: 1 (yes))",
-    )
-    parser.add_argument(
-        "--vertical_propnets",
-        type=int,
-        default=0,
-        help="If PropagationNets should be used for all vertical message "
-        "passing (g2m, m2g, up in hierarchy), in deterministic models."
-        "(default: 0 (no))",
-    )
-    # Training options
-    parser.add_argument(
-        "--loss",
-        type=str,
-        default="mse",
-        help="Loss function to use, see metric.py (default: wmse)",
-    )
-    parser.add_argument(
-        "--masked_loss",
-        type=bool,
-        default=False,
-        help="If the loss should be masked (default: False)",
-    )
-    parser.add_argument(
-        "--step_length",
-        type=int,
-        default=3,
-        help="Step length in hours to consider single time step 1-3 "
-        "(default: 3)",
-    )
-    parser.add_argument(
-        "--lr", type=float, default=1e-3, help="learning rate (default: 0.001)"
-    )
-    parser.add_argument(
-        "--val_interval",
-        type=int,
-        default=1,
-        help="Number of epochs training between each validation run "
-        "(default: 1)",
-    )
     # Evaluation options
     parser.add_argument(
         "--eval",
@@ -230,34 +103,10 @@ def get_args():
         "(default: None (train model))",
     )
     parser.add_argument(
-        "--mask_ratio",
-        type=float,
-        default=0.25,
-        help="Masking ratio of original grid",
-    )
-    parser.add_argument(
-        "--masking_block_size",
-        type=int,
-        default=50,
-        help="size of blocks (pathces) for masking",
-    )
-    parser.add_argument(
         "--wandb_project",
         type=str,
         default="neural-lam",
         help="Wandb project name",
-    )
-    parser.add_argument(
-        "--kl_term",  
-        type=int,
-        default=1,
-        help="KL term in loss function",
-    )
-    parser.add_argument(
-        "--kl_beta",  
-        type=float,
-        default=0.01,
-        help="KL beta term in loss function",
     )
     parser.add_argument(
         "--run_name",  
@@ -265,12 +114,111 @@ def get_args():
         default=None,
         help="Name of the run",
     )
+    ########################################################
+    # DATASET #
+    parser.add_argument(
+        "--output_variables",  
+        type=list,
+        default=None,
+        help="List of output variables to predict",
+    )
+    parser.add_argument(
+        "--img_in_channels",  
+        type=int,
+        default=5,
+        help="Number of input channels",
+    )
+    parser.add_argument(
+        "--img_out_channels",  
+        type=int,
+        default=5,
+        help="Number of output channels",
+    )
+    parser.add_argument(
+        "--img_resolution",  
+        type=list,
+        default=[300, 300],
+        help="Resolution of the input images",
+    )
+    ########################################################
+    # MODEL #
+    parser.add_argument(
+        "--N_grid_channels",  
+        type=int,
+        default=4,
+        help="Number of grid channels",
+    )
+    parser.add_argument(
+        "--embedding_type",  
+        type=str,
+        default="zero",
+        help="List of output variables to predict",
+    )
+    parser.add_argument(
+        "--model_channels",  
+        type=int,
+        default=64,
+        help="Number of model channels",
+    )
+    parser.add_argument(
+        "--channel_mult",  
+        type=list,
+        default=[1, 2, 2],
+        help="List of channel multipliers",
+    )
+    parser.add_argument(
+        "--attn_resolutions",  
+        type=list,
+        default=[16],
+        help="List of attention resolutions",
+    )
+    parser.add_argument(
+        "--model_type",  
+        type=str,
+        default="SongUNetPosEmbd",
+        help="List of attention resolutions",
+    )
+    ########################################################
+    # TRAINING #
+    parser.add_argument(
+        "--val_interval",
+        type=int,
+        default=1,
+        help="Number of epochs training between each validation run "
+        "(default: 1)",
+    )
+    parser.add_argument(
+        "--lr", type=float, default=2e-4, help="learning rate (default: 0.001)"
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=200,
+        help="upper epoch limit (default: 200)",
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=8, help="batch size (default: 4)"
+    )
+    parser.add_argument(
+        "--lr_decay", type=int, default=1, help="learning rate decay (default: 1)"
+    )
+    parser.add_argument(
+        "--lr_rampup", type=int, default=0, help="learning rate rampup (default: 0)"
+    )
+    parser.add_argument(
+        "--grad_clip_threshold", type=int, default=None, help="gradient clipping threshold (default: None)"
+    )
+    parser.add_argument(
+        "--checkpoint_level",
+        type=int,
+        default=0,
+        help="Checkpoint level for the model (default: 1)",
+    )
     return parser.parse_args()
 
 def main(args):
     # Asserts for arguments
     assert args.model in MODELS, f"Unknown model: {args.model}"
-    assert args.step_length <= 3, "Too high step length"
     assert args.eval in (
         None,
         "val",
@@ -335,7 +283,7 @@ def main(args):
     if args.eval:
         prefix = prefix + f"eval-{args.eval}-"
     run_name = (
-        f"{prefix}-{args.model}-{args.processor_layers}x{args.hidden_dim}-"
+        f"{prefix}-{args.model}-"
         f"{time.strftime('%m_%d_%H')}-{random_run_id:04d}"
     )
 
