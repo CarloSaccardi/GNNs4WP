@@ -109,7 +109,6 @@ class UNetWrapper(pl.LightningModule):
                             img_lr=img_lr
                         )
         loss = loss_map.sum() / batch_size
-        self.log('train_loss', loss, on_step=True, prog_bar=True)
         
         log_dict = {
             "train_loss": loss,
@@ -130,7 +129,6 @@ class UNetWrapper(pl.LightningModule):
                                                 img_lr=img_lr
                                             )
         val_loss = val_map.sum() / batch_size
-        self.log('val_loss', val_loss, on_epoch=True, sync_dist=True, prog_bar=True)
         
         # Log loss per time step forward and mean
         val_log_dict = {
@@ -153,6 +151,10 @@ class UNetWrapper(pl.LightningModule):
             
             
     def load_metrics_and_plots(self, prediction, high_res, batch_idx, mask=None):
+        
+        #reshap from (B, C, H, W) to (B, num_grid_nodes, C)
+        prediction = prediction.permute(0, 2, 3, 1).flatten(1, 2)
+        high_res = high_res.permute(0, 2, 3, 1).flatten(1, 2)
         
         if mask is None:
             mask = torch.ones_like(high_res[:, :, 0])
