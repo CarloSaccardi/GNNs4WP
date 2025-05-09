@@ -40,7 +40,7 @@ class UNetWrapper(pl.LightningModule):
         model_class = getattr(network_module, args.model_type)
         self.model = model_class(
             img_resolution=args.img_resolution,
-            in_channels=args.img_in_channels + args.N_grid_channels, # args.img_out_channels,
+            in_channels=args.img_in_channels + args.N_grid_channels + args.img_out_channels,
             out_channels=args.img_out_channels,
             **self.model_kwargs,
         )
@@ -52,6 +52,7 @@ class UNetWrapper(pl.LightningModule):
         x: torch.Tensor,
         img_lr: torch.Tensor,
         force_fp32: bool = False,
+        **model_kwargs: dict,
     ) -> torch.Tensor:
         """
         Forward pass of the UNet wrapper model.
@@ -91,7 +92,7 @@ class UNetWrapper(pl.LightningModule):
             x,  # (c_in * x).to(dtype),
             torch.zeros(x.shape[0], device=x.device),  # c_noise.flatten()
             class_labels=None,
-            **self.model_kwargs,
+            **model_kwargs,
         )
 
         # skip connection
@@ -104,7 +105,7 @@ class UNetWrapper(pl.LightningModule):
         img_clean = img_clean.float()
         img_lr = img_lr.float()
         loss_map, _, _ = self.loss_fn(
-                            net=self.model,
+                            net=self,
                             img_clean=img_clean,
                             img_lr=img_lr
                         )
@@ -124,7 +125,7 @@ class UNetWrapper(pl.LightningModule):
         img_clean = img_clean.float()
         img_lr = img_lr.float()
         val_map, ground_truth, predictions = self.loss_fn(
-                                                net=self.model,
+                                                net=self,
                                                 img_clean=img_clean,
                                                 img_lr=img_lr
                                             )
@@ -295,7 +296,7 @@ class RegressionLoss:
         y_lr = y_tot[:, img_clean.shape[1] :, :, :]
 
         zero_input = torch.zeros_like(y, device=img_clean.device)
-        D_yn = net(zero_input, y_lr, class_labels=None, augment_labels=augment_labels)
+        D_yn = net(zero_input, y_lr, force_fp32=False, augment_labels=augment_labels)
         loss = weight * ((D_yn - y) ** 2)
 
         return loss, y, D_yn
