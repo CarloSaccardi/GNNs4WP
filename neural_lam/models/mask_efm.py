@@ -340,13 +340,13 @@ class GraphEFM_mask(ARModel):
             and self.current_epoch % 10 == 0
             and self.wandb_project is not None
         ):
-            self.load_metrics_and_plots(prediction, high_res, batch_idx, mask=None)
+            self.load_metrics_and_plots(prediction, ground_truth, batch_idx, mask=None)
             
             
-    def load_metrics_and_plots(self, prediction, high_res, batch_idx, mask=None):
+    def load_metrics_and_plots(self, prediction, ground_truth, batch_idx, mask=None):
         
         if mask is None:
-            mask = torch.ones_like(high_res[:, :, 0])
+            mask = torch.ones_like(ground_truth[:, :, 0])
         
         # Plot samples
         log_plot_dict = {}
@@ -359,7 +359,7 @@ class GraphEFM_mask(ARModel):
                 batch_idx, :, var_i
             ]  # (S, num_grid_nodes)
             
-            target_state = high_res[
+            target_state = ground_truth[
                 batch_idx, :, var_i
             ]  # (num_grid_nodes,)
 
