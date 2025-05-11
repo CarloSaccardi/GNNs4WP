@@ -33,9 +33,6 @@ class ARModel(pl.LightningModule):
             else:
                 setattr(self, name, attr_value)
         # Specify dimensions of data
-        self.masked_loss = args.masked_loss
-        self.mask_ratio = args.mask_ratio
-        self.masking_block_size = args.masking_block_size
         self.g2m_dim = self.g2m_features.shape[1]
         self.m2g_dim = self.m2g_features.shape[1]
         self.kl_beta = args.kl_beta
@@ -82,21 +79,6 @@ class ARModel(pl.LightningModule):
         }
         if self.output_std:
             self.test_metrics["output_std"] = []  # Treat as metric
-
-        ##### MAsking parameters #####    
-        if self.mask_ratio is not None:
-            self.pos_embed = torch.nn.Parameter(torch.zeros(1, self.num_grid_nodes, args.hidden_dim), requires_grad=False)  # fixed sin-cos embedding
-            self.mask_token = torch.nn.Parameter(torch.zeros(1, 1, args.hidden_dim))
-            self.decoder_pos_embed = torch.nn.Parameter(torch.zeros(1, self.num_grid_nodes, args.hidden_dim), requires_grad=False)  # fixed sin-cos embedding
-            self.initialize_weights()
-        
-        
-    def initialize_weights(self):
-        pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], int(self.num_grid_nodes**.5), cls_token=False)
-        self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
-        decoder_pos_embed = get_2d_sincos_pos_embed(self.decoder_pos_embed.shape[-1], int(self.num_grid_nodes**.5), cls_token=False)
-        self.decoder_pos_embed.data.copy_(torch.from_numpy(decoder_pos_embed).float().unsqueeze(0))
-        torch.nn.init.normal_(self.mask_token, std=.02)
 
     def configure_optimizers(self):
         opt = torch.optim.AdamW(

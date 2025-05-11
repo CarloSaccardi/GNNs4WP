@@ -63,23 +63,14 @@ class GraphEFM_mask(ARModel):
         mesh_up_dim = self.mesh_up_features[0].shape[1]
         mesh_down_dim = self.mesh_down_features[0].shape[1]
         
-        if args.dataset_era5 is None or args.dataset_cerra is None:
-            #first embedder has to project 2 features, as the first mesh is just a projection of the original grid
-            self.mesh_embedders = torch.nn.ModuleList(
-                [
-                    utils.make_mlp([mesh_dim] + self.mlp_blueprint_end)
-                    for _ in range(num_levels)
-                ]
-            )
-        else:
-            #first embedder has to project 8 features, as the first mesh a lower resolution version of the original grid
-            self.low_res_embedder = utils.make_mlp([self.grid_dim] + self.mlp_blueprint_end)
-            self.mesh_embedders = torch.nn.ModuleList( [self.low_res_embedder] +
-                [
-                    utils.make_mlp([mesh_dim] + self.mlp_blueprint_end)
-                    for _ in range(num_levels-1)
-                ]
-            )
+        #first embedder has to project 2 features, as the first mesh is just a projection of the original grid
+        self.mesh_embedders = torch.nn.ModuleList(
+            [
+                utils.make_mlp([mesh_dim] + self.mlp_blueprint_end)
+                for _ in range(num_levels)
+            ]
+        )
+
         self.mesh_up_embedders = torch.nn.ModuleList(
             [
                 utils.make_mlp([mesh_up_dim] + self.mlp_blueprint_end)
@@ -159,7 +150,7 @@ class GraphEFM_mask(ARModel):
         )
 
 
-    def embedd_all(self, high_res, low_res):
+    def embedd_all(self, high_res):
         """
         embed all node and edge representations
 
@@ -181,21 +172,9 @@ class GraphEFM_mask(ARModel):
             dim=-1,
         )  # (B, num_grid_nodes, grid_dim)
         high_res_grid_emb = self.high_res_embedder(high_res_grid_features)
-        high_res_grid_emb = high_res_grid_emb + self.pos_embed
-        # Masking
-        if self.mask_ratio is not None:
-            high_res_grid_emb, mask, ids_restore, g2m_features, g2m_edge_index = mask_utils.masking(high_res_grid_emb, 
-                                                                                 #self.pos_embed, 
-                                                                                 self.g2m_edge_index, 
-                                                                                 self.g2m_features,
-                                                                                 self.mask_ratio,
-                                                                                 int(self.num_grid_nodes**.5),
-                                                                                 self.masking_block_size)
-            graph_emb = {"g2m_edge_index": g2m_edge_index}  # Ensure it is part of the masking block
-        else:
-            mask = ids_restore = None
-            g2m_features = self.g2m_features
-            graph_emb = {"g2m_edge_index": mask_utils.adjust_g2m_edge_index(self.g2m_edge_index)}
+        
+        g2m_features = self.g2m_features
+        graph_emb = {"g2m_edge_index": mask_utils.adjust_g2m_edge_index(self.g2m_edge_index)}
         # Graph embedding
         graph_emb.update({
             "g2m": self.expand_to_batch(self.g2m_embedder(g2m_features), batch_size),
@@ -203,8 +182,7 @@ class GraphEFM_mask(ARModel):
         })
         # Embed mesh nodes
         graph_emb["mesh"] = [
-            emb(torch.cat((low_res, self.expand_to_batch(node_static_features, batch_size)), dim=-1))
-            if (indx ==0 and low_res is not None) else self.expand_to_batch(emb(node_static_features), batch_size)
+            self.expand_to_batch(emb(node_static_features), batch_size)
             for indx, (emb, node_static_features) in enumerate(zip(self.mesh_embedders, self.mesh_static_features))
         ]
         # Embed mesh edges, in-between levels
@@ -229,11 +207,11 @@ class GraphEFM_mask(ARModel):
             )
         ]
 
-        return high_res_grid_emb, graph_emb, mask, ids_restore
+        return high_res_grid_emb, graph_emb
 
     
     def encode_sample_decode(
-        self, high_res_emb, graph_emb, ids_restore
+        self, high_res_emb, graph_emb
     ):
         """
         Estimate (masked) likelihood using given distribution over
@@ -261,14 +239,7 @@ class GraphEFM_mask(ARModel):
         # Sample from variational distribution
         latent_samples = latent_dist.rsample()  # (B, num_mesh_nodes, d_latent)
 
-        if ids_restore is not None:
-            # Compute reconstruction (decoder)        
-            mask_tokens = self.mask_token.repeat(high_res_emb.shape[0], ids_restore.shape[1] - high_res_emb.shape[1], 1)
-            x_ = torch.cat([high_res_emb, mask_tokens], dim=1)
-            x_ = torch.gather(x_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, high_res_emb.shape[2]))  # unshuffle
-            full_grid_rep = x_ + self.decoder_pos_embed
-        else:
-            full_grid_rep = None
+        full_grid_rep = None
         
         pred_mean, model_pred_std = self.decoder(
             high_res_emb, latent_samples, graph_emb, full_grid_rep
@@ -277,7 +248,7 @@ class GraphEFM_mask(ARModel):
         return latent_dist, pred_mean, model_pred_std
         
 
-    def compute_loss(self, prediction, target, latent_dist, mask):
+    def compute_loss(self, prediction, target, latent_dist):
         """
         if mask is not None:
             mask = mask.unsqueeze(-1)
@@ -288,20 +259,11 @@ class GraphEFM_mask(ARModel):
             mse = mse_batches.mean()
         else:
         """
-        if self.masked_loss:
-            n_features = prediction.shape[-1]
-            mask = mask.unsqueeze(-1)
-            mask = mask.repeat(1, 1, n_features)
-            squared_error = ((prediction - target) ** 2) * mask 
-            mse_batches = squared_error.sum(dim=1) / mask.sum(dim=1)
-            mse_per_var = mse_batches.mean(dim=0)
-            mse = mse_batches.mean()
             
-        else:
-            squared_error = (prediction - target) ** 2
-            mse_batches = squared_error.mean(dim=1)
-            mse_per_var = mse_batches.mean(dim=0)
-            mse = mse_batches.mean()
+        squared_error = (prediction - target) ** 2
+        mse_batches = squared_error.mean(dim=1)
+        mse_per_var = mse_batches.mean(dim=0)
+        mse = mse_batches.mean()
         
         # Compute KL divergence
         standard_normal = tdists.Normal(torch.zeros_like(latent_dist.loc), torch.ones_like(latent_dist.scale))
@@ -322,11 +284,11 @@ class GraphEFM_mask(ARModel):
         forcing_features: (B, pred_steps, num_grid_nodes, d_forcing), where
             index 0 corresponds to index 1 of init_states
         """
-        high_res, low_res = batch if len(batch) == 2 else (batch, None)
+        ground_truth, high_res = batch if len(batch) == 2 else (batch, None)
         
-        high_res_grid_emb, graph_emb, mask, ids_restore = self.embedd_all(high_res,low_res)
-        var_dist, pred_mean, _ = self.encode_sample_decode(high_res_grid_emb, graph_emb, ids_restore)
-        loss, mse_per_var, kl_term = self.compute_loss(pred_mean, high_res, var_dist, mask)
+        high_res_grid_emb, graph_emb = self.embedd_all(high_res)
+        var_dist, pred_mean, _ = self.encode_sample_decode(high_res_grid_emb, graph_emb)
+        loss, mse_per_var, kl_term = self.compute_loss(pred_mean, ground_truth, var_dist)
         
         
         log_dict = {
@@ -349,11 +311,11 @@ class GraphEFM_mask(ARModel):
         Run validation on single batch
         """
         
-        high_res, low_res = batch if len(batch) == 2 else (batch, None)
+        ground_truth, high_res = batch if len(batch) == 2 else (batch, None)
         
-        high_res_grid_emb, graph_emb, mask, ids_restore = self.embedd_all(high_res,low_res)
-        var_dist, prediction, _ = self.encode_sample_decode(high_res_grid_emb, graph_emb, ids_restore)
-        val_loss, val_mse_per_var, kl_term = self.compute_loss(prediction, high_res, var_dist, mask)
+        high_res_grid_emb, graph_emb = self.embedd_all(high_res)
+        var_dist, prediction, _ = self.encode_sample_decode(high_res_grid_emb, graph_emb)
+        val_loss, val_mse_per_var, kl_term = self.compute_loss(prediction, ground_truth, var_dist)
         
         
         # Log loss per time step forward and mean
@@ -378,10 +340,10 @@ class GraphEFM_mask(ARModel):
             and self.current_epoch % 10 == 0
             and self.wandb_project is not None
         ):
-            self.load_metrics_and_plots(prediction, high_res, mask, batch_idx)
+            self.load_metrics_and_plots(prediction, high_res, batch_idx, mask=None)
             
             
-    def load_metrics_and_plots(self, prediction, high_res, mask, batch_idx):
+    def load_metrics_and_plots(self, prediction, high_res, batch_idx, mask=None):
         
         if mask is None:
             mask = torch.ones_like(high_res[:, :, 0])

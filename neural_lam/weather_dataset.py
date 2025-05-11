@@ -10,6 +10,8 @@ import torch
 # First-party
 from neural_lam import constants, utils
 
+import torch.nn.functional as F
+
 
 class WeatherDataset(torch.utils.data.Dataset):
     """
@@ -677,8 +679,12 @@ class ERA5toCERRA2(torch.utils.data.Dataset):
                 print(f"Failed to load {sample_path_CERRA}")
                 print(f"Failed to load {sample_path_era5}")
             # Flatten spatial dimensions.
+            
+            sample_era5 = self.upsample(sample_era5, sample_CERRA)
+            
             sample_CERRA = sample_CERRA.flatten(0, 1)
             sample_era5 = sample_era5.flatten(0, 1)
+            
             if self.standardize:
                 sample_CERRA = (sample_CERRA - self.data_mean_CERRA) / self.data_std_CERRA
                 sample_era5 = (sample_era5 - self.data_mean_era5) / self.data_std_era5
@@ -707,3 +713,31 @@ class ERA5toCERRA2(torch.utils.data.Dataset):
             if self.standardize:
                 sample_era5 = (sample_era5 - self.data_mean_era5) / self.data_std_era5
             return sample_era5
+
+
+    def upsample(self, lr_tensor, hr_tensor):
+        """
+        Upsample the input tensor to match the target tensor's spatial dimensions.
+        """
+    
+        # Flatten spatial dimensions.
+        hr_tensor = hr_tensor.permute(2, 0, 1)
+        lr_tensor = lr_tensor.permute(2, 0, 1)
+        # 1) add batch dim
+        era5_batched = lr_tensor.unsqueeze(0)                # [1, C, H_old, W_old]
+
+        # 2) pick the target spatial size from sample_CERRA
+        target_size = hr_tensor.shape[-2:]                  # (H_new, W_new)
+
+        # 3) interpolate
+        upsampled = F.interpolate(
+            era5_batched,
+            size=target_size,
+            mode='bilinear',
+            align_corners=False
+        )                                                      # [1, C, H_new, W_new]
+
+        # 5) permute back to original shape
+        upsampled = upsampled.permute(0, 2, 3, 1)            # [H_new, W_new, C]
+        # 4) drop the batch dim
+        return upsampled.squeeze(0)                      # [C, H_new, W_new]
