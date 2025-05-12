@@ -10,8 +10,8 @@ from lightning_fabric.utilities import seed
 
 # First-party
 from neural_lam import constants, utils
-from neural_lam.models.mask_efm import GraphEFM_mask
-from neural_lam.models.graphcast import GraphCast
+from neural_lam.models.graph_unet import GraphUNet
+#from neural_lam.models.graphcast import GraphCast
 from neural_lam.weather_dataset import ERA5toCERRA, ERA5toCERRA2
 import os
 import yaml
@@ -19,8 +19,8 @@ import yaml
 #os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 MODELS = {
-    "graphcast": GraphCast,
-    "graph_efm": GraphEFM_mask,
+    #"graphcast": GraphCast,
+    "graph_efm": GraphUNet,
 }
 
 
@@ -257,6 +257,12 @@ def get_args():
         type=str,
         default=None,
         help="Name of the run",
+    )
+    parser.add_argument(
+        "--variational",
+        type=bool,
+        default=False,
+        help="If the model is variational (default: False)",
     )
     return parser.parse_args()
 
