@@ -1,96 +1,134 @@
-# Standard library
-import os
-from argparse import ArgumentParser
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
-# Third-party
+"""
+Compute per-channel mean and standard deviation for the high-
+ and low-resolution weather datasets.
+
+Run:
+    python compute_stats.py \
+        --dataset_cerra /path/to/CERRA \
+        --dataset_era5  /path/to/ERA5 \
+        --batch_size 64
+"""
+from __future__ import annotations
+
+# ── Standard library ──────────────────────────────────────────────────────────
+import argparse
+import os
+from pathlib import Path
+
+# ── Third-party ───────────────────────────────────────────────────────────────
 import numpy as np
 import torch
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-# First-party
-from neural_lam import constants
-from neural_lam.weather_dataset import ERA5toCERRA
+# ── First-party ───────────────────────────────────────────────────────────────
+from neural_lam.weather_dataset import ERA5tCERRAStats
 
 
-def main():
+def add_bool_flag(parser: argparse.ArgumentParser, name: str, default: bool) -> None:
+    """Utility to add --foo / --no-foo flags."""
+    group = parser.add_mutually_exclusive_group(required=False)
+    group.add_argument(f"--{name}", dest=name, action="store_true")
+    group.add_argument(f"--no-{name}", dest=name, action="store_false")
+    parser.set_defaults(**{name: default})
+
+
+@torch.inference_mode()          # same as torch.no_grad(), but clearer intent
+def compute_running_stats(loader: DataLoader, use_high: bool) -> tuple[torch.Tensor, torch.Tensor]:
     """
-    Pre-compute parameter weights to be used in loss function
+    Online (streaming) mean / std computation using two running sums:
+        μ = Σ x / N
+        σ = sqrt( Σ x² / N − μ² )
+    Returns:
+        mean, std – both shape (C,)
     """
-    parser = ArgumentParser(description="Training arguments")
+    device_accum = torch.device("cpu")             # <- keep on CPU
+    dtype_accum  = torch.float64                   # <- double for stability
+
+    # running totals
+    tot_count   = 0
+    tot_sum     = None
+    tot_sum_sq  = None
+
+    for batch in tqdm(loader, desc="Accumulating statistics"):
+        high, low = batch               # we only care about 'high' OR 'low', caller loops twice
+        x = high if use_high else low
+
+        # Bring to double on CPU
+        x = x.to(device_accum, dtype=dtype_accum)
+
+        # flatten everything except channel dim -> (B, C, -1)
+        B, C, *spatial = x.shape
+        x = x.view(B, C, -1)
+
+        # accumulate
+        tot_count  += B * x.shape[-1]
+        batch_sum   = x.sum(dim=(0, 2))            # per-channel
+        batch_sqsum = (x ** 2).sum(dim=(0, 2))
+
+        if tot_sum is None:                        # first iteration
+            tot_sum    = batch_sum
+            tot_sum_sq = batch_sqsum
+        else:
+            tot_sum    += batch_sum
+            tot_sum_sq += batch_sqsum
+
+    mean = tot_sum / tot_count
+    var  = tot_sum_sq / tot_count - mean ** 2
+    std  = torch.sqrt(var.clamp(min=0.0))
+
+    return mean.float(), std.float()               # down-cast back to fp32
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
     parser.add_argument(
         "--dataset_cerra",
-        type=str,
-        default="/aspire/CarloData/MASK_GNN_DATA/CERRA_interpolated_300x300",
-        help="Dataset, corresponding to name in data directory "
-        "(default: meps_example)",
+        type=Path,
+        default=Path("/aspire/CarloData/zz_UNETs/data/big_dataset/CERRA"),
     )
     parser.add_argument(
         "--dataset_era5",
-        type=str,
-        default="/aspire/CarloData/MASK_GNN_DATA/ERA5_60_n2_40_18",
-        help="Dataset, corresponding to name in data directory "
-        "(default: meps_example)",
+        type=Path,
+        default=Path("/aspire/CarloData/zz_UNETs/data/big_dataset/ERA5"),
     )
-    parser.add_argument(
-        "--batch_size",
-        type=int,
-        default=32,
-        help="Batch size when iterating over the dataset",
-    )
-    parser.add_argument(
-        "--n_workers",
-        type=int,
-        default=4,
-        help="Number of workers in data loader (default: 4)",
-    )
+    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--n_workers", type=int, default=4)
+    add_bool_flag(parser, "pin_memory", default=False)  #set to False when using cpu only
     args = parser.parse_args()
 
-    static_dir_path_highRes = os.path.join("data", args.dataset_cerra, "static")
-    static_dir_path_lowRes = os.path.join("data", args.dataset_era5, "static")
-
-    # Load dataset without any subsampling
-    ds = ERA5toCERRA(
-            args.dataset_cerra,
-            args.dataset_era5,
-            split="train",
-            standardize=False,
-        )  # Without standardization
-    loader = torch.utils.data.DataLoader(
-        ds, args.batch_size, shuffle=False, num_workers=args.n_workers
+    # ── Load datasets ────────────────────────────────────────────────────────
+    ds = ERA5tCERRAStats(
+        str(args.dataset_cerra),
+        str(args.dataset_era5),
+        split="train",
     )
-    # Compute mean and std.-dev. of each parameter (+ flux forcing)
-    # across full dataset
-    print("Computing mean and std.-dev. for parameters...")
-    means_highRes = []
-    squares_highRes = []
-    means_lowRes = []
-    squares_lowRes = []
-    for highRes, lowRes in tqdm(loader):
+    loader = DataLoader(
+        ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.n_workers,
+        pin_memory=args.pin_memory,
+        persistent_workers=args.n_workers > 0,
+    )
 
-        means_highRes.append(torch.mean(highRes, dim=1))  # (N_batch, d_features,)
-        means_lowRes.append(torch.mean(lowRes, dim=1))  # (N_batch, d_features,)
-        
-        squares_highRes.append(
-            torch.mean(highRes**2, dim=1)
-        )
-        squares_lowRes.append(
-            torch.mean(lowRes**2, dim=1)
-        )
+    # ── Compute stats separately ────────────────────────────────────────────
+    mean_high, std_high = compute_running_stats(loader, use_high=True)
+    mean_low , std_low  = compute_running_stats(loader, use_high=False)
 
-    mean_highRes = torch.mean(torch.cat(means_highRes, dim=0), dim=0)  # (d_features)
-    second_moment = torch.mean(torch.cat(squares_highRes, dim=0), dim=0)
-    std_highRes = torch.sqrt(second_moment - mean_highRes**2)  # (d_features)
-    
-    mean_lowRes = torch.mean(torch.cat(means_lowRes, dim=0), dim=0)  # (d_features)
-    second_moment = torch.mean(torch.cat(squares_lowRes, dim=0), dim=0)
-    std_lowRes = torch.sqrt(second_moment - mean_lowRes**2)  # (d_features)
+    # ── Save ────────────────────────────────────────────────────────────────
+    for root, mean, std in [
+        (args.dataset_cerra / "static", mean_high, std_high),
+        (args.dataset_era5  / "static", mean_low , std_low ),
+    ]:
+        root.mkdir(parents=True, exist_ok=True)
+        torch.save(mean, root / "parameter_mean.pt")
+        torch.save(std , root / "parameter_std.pt")
 
-
-    print("Saving mean, std.-dev...")
-    torch.save(mean_highRes, os.path.join(static_dir_path_highRes, "parameter_mean.pt"))
-    torch.save(std_highRes, os.path.join(static_dir_path_highRes, "parameter_std.pt"))
-    torch.save(mean_lowRes, os.path.join(static_dir_path_lowRes, "parameter_mean.pt"))
-    torch.save(std_lowRes, os.path.join(static_dir_path_lowRes, "parameter_std.pt"))
+    print("✓ Statistics saved.")
 
 
 if __name__ == "__main__":

@@ -13,11 +13,11 @@ from neural_lam import constants, utils
 from neural_lam.models.mask_efm import GraphEFM
 from neural_lam.models.unet import UNetWrapper
 from neural_lam.models.graphcast import GraphCast
-from neural_lam.weather_dataset import ERA5toCERRA, ERA5toCERRA2
+from neural_lam.weather_dataset import ERA5toCERRA2
 import os
 import yaml
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+#os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 MODELS = {
     "graphcast": GraphCast,
