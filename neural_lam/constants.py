@@ -45,7 +45,7 @@ VAL_PLOT_VARS = {
     14: [1, 3],  # wvint_0
 }
 
-VAL_PLOT_VARS_CERRA = [0]
+VAL_PLOT_VARS_CERRA = [0,1,2,3]
 
 # During validation, plot example samples of latent variable from prior and
 # variational distribution
@@ -83,9 +83,9 @@ PARAM_NAMES_CERRA = [
 PARAM_NAMES_SHORT_CERRA = [
     "u_wind",
     "v_wind",
-    "geopotential",
-    "temp",
-    "specific_humidity"
+    "t2m",
+    "sshf",
+    "zust"
 ]
 
 PARAM_NAMES_SHORT = [
@@ -111,9 +111,9 @@ PARAM_NAMES_SHORT = [
 PARAM_UNITS_CERRA = [
     "Pa",
     "Pa",
+    "K",
     "W/m²",
-    "W/m²",
-    "W/m²", 
+    "m/s", 
 ]
 PARAM_UNITS = [
     "Pa",
@@ -138,7 +138,7 @@ PARAM_UNITS = [
 # Projection and grid
 # Hard coded for now, but should eventually be part of dataset desc. files
 GRID_SHAPE = (268, 238)  # (y, x)
-GRID_SHAPE_CERRA = (400, 400)  # (y, x)
+GRID_SHAPE_CERRA = (368, 368)  # (y, x)
 GRID_SHAPE_ERA5 = (81, 81)  # (y, x)
 
 LAMBERT_PROJ_PARAMS = {

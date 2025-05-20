@@ -5,7 +5,8 @@ import wandb
 import matplotlib.pyplot as plt
 from neural_lam import constants
 from neural_lam import vis
-from typing import Callable, Optional, Tuple, Union
+from typing import Callable, Optional, Tuple
+import random
 
 network_module = importlib.import_module("physicsnemo.models.diffusion")
 
@@ -163,31 +164,33 @@ class UNetWrapper(pl.LightningModule):
         # Plot samples
         log_plot_dict = {}
 
-        for var_i in constants.VAL_PLOT_VARS_CERRA:
-            var_name = constants.PARAM_NAMES_SHORT_CERRA[var_i]
-            var_unit = constants.PARAM_UNITS_CERRA[var_i]
+        var_i = random.randint(0, len(constants.PARAM_NAMES_SHORT_CERRA) - 1)
+        var_name = constants.PARAM_NAMES_SHORT_CERRA[var_i]
+        var_unit = constants.PARAM_UNITS_CERRA[var_i]
+        
+        sample = random.randint(0, prediction.shape[0] - 1)
 
-            pred_states = prediction[
-                batch_idx, :, var_i
-            ]  # (S, num_grid_nodes)
-            
-            target_state = high_res[
-                batch_idx, :, var_i
-            ]  # (num_grid_nodes,)
+        pred_states = prediction[
+            sample, :, var_i
+        ]  # (S, num_grid_nodes)
+        
+        target_state = high_res[
+            sample, :, var_i
+        ]  # (num_grid_nodes,)
 
-            plot_title = (
-                f"{var_name} ({var_unit})"
-            )
+        plot_title = (
+            f"{var_name} ({var_unit})"
+        )
 
-            # Make plots
-            log_plot_dict[
-                f"pred_{var_name}"
-            ] = vis.plot_ensemble_prediction(
-                pred_states,
-                target_state,
-                obs_mask = mask[batch_idx],
-                title=f"{plot_title} (prior)",
-            )
+        # Make plots
+        log_plot_dict[
+            f"pred_{var_name}"
+        ] = vis.plot_ensemble_prediction(
+            pred_states,
+            target_state,
+            obs_mask = mask[sample],
+            title=f"{plot_title} (prior)",
+        )
 
         if not self.trainer.sanity_checking:
             # Log all plots to wandb
