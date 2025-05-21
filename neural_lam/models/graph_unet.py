@@ -13,6 +13,8 @@ from neural_lam import constants, mask_utils, utils, vis
 from neural_lam.models.base_gnn_module import BaseGraphModule
 from neural_lam.models.hi_graph_latent_decoder import HiGraphLatentUnet
 
+import random
+
 logger = logging.getLogger(__name__)
 
 
@@ -241,45 +243,47 @@ class GraphUNet(BaseGraphModule):
             self.load_metrics_and_plots(prediction, ground_truth, batch_idx, mask=None)
             
             
-    def load_metrics_and_plots(self, prediction, ground_truth, batch_idx, mask=None):
+    def load_metrics_and_plots(self, prediction, high_res, batch_idx, mask=None):
         
         if mask is None:
-            mask = torch.ones_like(ground_truth[:, :, 0])
+            mask = torch.ones_like(high_res[:, :, 0])
         
         # Plot samples
         log_plot_dict = {}
 
-        for var_i in constants.VAL_PLOT_VARS_CERRA:
-            var_name = constants.PARAM_NAMES_SHORT_CERRA[var_i]
-            var_unit = constants.PARAM_UNITS_CERRA[var_i]
+        var_i = random.randint(0, len(constants.PARAM_NAMES_SHORT_CERRA) - 1)
+        var_name = constants.PARAM_NAMES_SHORT_CERRA[var_i]
+        var_unit = constants.PARAM_UNITS_CERRA[var_i]
+        
+        sample = random.randint(0, prediction.shape[0] - 1)
 
-            pred_states = prediction[
-                batch_idx, :, var_i
-            ]  # (S, num_grid_nodes)
-            
-            target_state = ground_truth[
-                batch_idx, :, var_i
-            ]  # (num_grid_nodes,)
+        pred_states = prediction[
+            sample, :, var_i
+        ]  # (S, num_grid_nodes)
+        
+        target_state = high_res[
+            sample, :, var_i
+        ]  # (num_grid_nodes,)
 
-            plot_title = (
-                f"{var_name} ({var_unit})"
-            )
+        plot_title = (
+            f"{var_name} ({var_unit})"
+        )
 
-            # Make plots
-            log_plot_dict[
-                f"pred_{var_name}"
-            ] = vis.plot_ensemble_prediction(
-                pred_states,
-                target_state,
-                obs_mask = mask[batch_idx],
-                title=f"{plot_title} (prior)",
-            )
+        # Make plots
+        log_plot_dict[
+            f"pred_{var_name}"
+        ] = vis.plot_ensemble_prediction(
+            pred_states,
+            target_state,
+            obs_mask = mask[sample],
+            title=f"{plot_title} (prior)",
+        )
 
         if not self.trainer.sanity_checking:
             # Log all plots to wandb
             wandb.log(log_plot_dict)
 
-        plt.close("all")   
+        plt.close("all") 
         
     def test_step(self, batch, batch_idx: int) -> dict:
         """
