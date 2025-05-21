@@ -154,25 +154,11 @@ class GraphUNet(BaseGraphModule):
         """
         Compute reconstruction MSE and KL divergence loss.
         """
-        mse = F.mse_loss(prediction, target, reduction="mean")
-        # MSE per feature: mean over batch and nodes
-        diff = prediction - target
-        mse_per_var = diff.pow(2).mean(dim=1).mean(dim=0)
-
-        if self.variational:
-            # KL divergence to standard normal
-            std_normal = tdists.Normal(
-                torch.zeros_like(latent_dist.loc), torch.ones_like(latent_dist.scale)
-            )
-            kl_term = tdists.kl.kl_divergence(latent_dist, std_normal).sum(dim=-1).mean()
-            total_loss = mse + self.kl_beta * kl_term
+        batch_size = prediction.shape[0]
+        diff_squared = (prediction - target)**2
+        total_loss = diff_squared.sum() / batch_size
             
-        else:
-            # No KL divergence
-            kl_term = torch.tensor(0.0, device=prediction.device)
-            total_loss = mse
-            
-        return total_loss, mse_per_var, kl_term
+        return total_loss
 
     def training_step(self, batch, batch_idx: int) -> torch.Tensor:
         """
@@ -186,16 +172,11 @@ class GraphUNet(BaseGraphModule):
 
         high_res_emb, graph_emb = self.embed_all(high_res)
         latent_dist, pred_mean, _ = self.encode_decode(high_res_emb, graph_emb)
-        loss, mse_per_var, kl_term = self.compute_loss(pred_mean, ground_truth, latent_dist)
+        loss = self.compute_loss(pred_mean, ground_truth, latent_dist)
 
         # Log metrics
         log_data = {
             "train_loss": loss,
-            "train_kl": kl_term,
-            **{
-                f"train_mse_{constants.PARAM_NAMES_SHORT_CERRA[i]}_{constants.PARAM_UNITS_CERRA[i]}": mse_per_var[i]
-                for i in range(mse_per_var.numel())
-            },
         }
         self.log_dict(log_data, prog_bar=True, on_epoch=True, sync_dist=True)
 
@@ -215,17 +196,12 @@ class GraphUNet(BaseGraphModule):
         
         high_res_grid_emb, graph_emb = self.embed_all(high_res)
         var_dist, prediction, _ = self.encode_decode(high_res_grid_emb, graph_emb)
-        val_loss, val_mse_per_var, kl_term = self.compute_loss(prediction, ground_truth, var_dist)
+        val_loss = self.compute_loss(prediction, ground_truth, var_dist)
         
         
         # Log loss per time step forward and mean
         val_log_dict = {
             "val_loss": val_loss,
-            "val_kl_div": kl_term,
-            **{
-                f"val_MSE_{constants.PARAM_NAMES_SHORT_CERRA[var_i]} {constants.PARAM_UNITS_CERRA[var_i]}": val_mse_per_var[var_i]
-                for var_i in range(len(val_mse_per_var))
-            },
         }
         self.log_dict(
             val_log_dict, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True
