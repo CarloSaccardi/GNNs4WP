@@ -50,16 +50,16 @@ def load_static_data(dataset_name, device="cpu"):
             os.path.join(static_dir_path, fn), map_location=device
         )
 
-    grid_static_features = loads_file(
-        "grid_features.pt"
-    )  # (N_grid, d_grid_static)
+    # grid_static_features = loads_file(
+    #     "grid_features.pt"
+    # )  # (N_grid, d_grid_static)
 
     # Load parameter std for computing validation errors in original data scale
     data_mean = loads_file("parameter_mean.pt")  # (d_features,)
     data_std = loads_file("parameter_std.pt")  # (d_features,)
 
     return {
-        "grid_static_features": grid_static_features,
+        # "grid_static_features": grid_static_features,
         "data_mean": data_mean,
         "data_std": data_std,
     }

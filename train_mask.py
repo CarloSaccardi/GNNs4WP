@@ -12,7 +12,7 @@ from lightning_fabric.utilities import seed
 from neural_lam import constants, utils
 from neural_lam.models.graph_unet import GraphUNet
 #from neural_lam.models.graphcast import GraphCast
-from neural_lam.weather_dataset import ERA5toCERRA, ERA5toCERRA2
+from neural_lam.weather_dataset import ERA5toCERRA2
 import os
 import yaml
 

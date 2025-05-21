@@ -54,9 +54,9 @@ class HiGraphLatentUnet(nn.Module):
         # Output parameter mapping
         self.output_std = output_std
         param_output_dim = (
-            2 * constants.GRID_STATE_DIM_CERRA
+            2 * constants.GRID_STATE_DIM_OUT
             if output_std
-            else constants.GRID_STATE_DIM_CERRA
+            else constants.GRID_STATE_DIM_OUT
         )
         self.param_map = utils.make_mlp(
             [hidden_dim] * (hidden_layers + 1) + [param_output_dim],

@@ -319,14 +319,14 @@ def main():
     parser.add_argument(
         "--dataset_high",
         type=str,
-        default="/aspire/CarloData/MASK_GNN_DATA/CERRA_interpolated_300x300",
+        default="/aspire/CarloData/zz_UNETs/data/big_dataset/CERRA",
         help="Dataset to load grid point coordinates from "
         "(default: meps_example)",
     )
     parser.add_argument(
         "--graph",
         type=str,
-        default="hierarchical_highRes_only_fewLayers",
+        default="graph_UNet",
         help="Name to save graph as (default: multiscale)",
     )
     parser.add_argument(
@@ -339,6 +339,7 @@ def main():
     parser.add_argument(
         "--levels",
         type=int,
+        default=5,
         help="Limit multi-scale mesh to given number of levels, "
         "from bottom up (default: None (no limit))",
     )
@@ -389,32 +390,30 @@ def main():
 
     #
     # Mesh geometry computation
-    #
-    nx = 3  # number of children per node (resulting in nx**2 leaves)
-    nlev = int(np.log(max(xy_ref.shape)) / np.log(nx))
-    nleaf = nx ** nlev  # total number of leaves
 
     # Limit the number of mesh levels if args.levels is provided.
-    mesh_levels = nlev if not args.levels else min(nlev, args.levels)
+    mesh_levels = args.levels
+    n_nodes = xy_ref.shape[-1]
 
-    print(f"nlev: {nlev}, nleaf: {nleaf}, mesh_levels: {mesh_levels}")
-    print(f"pos_max: {pos_max_ref}")
+    print(f"nlev: {mesh_levels + 1}, mesh_levels: {mesh_levels}")
 
     #
     # Build multi-resolution mesh graphs using the reference grid.
     #
     G = []
 
-    for lev in range(1, mesh_levels-1): #for lev in range(1, mesh_levels + 1):
+    for lev in range(1, mesh_levels+1): #for lev in range(1, mesh_levels + 1):
         # Update n for the next level based on the total leaves and current level
-        n = int(nleaf / (nx ** lev))
+        n_nodes //= 2
         # Create mesh graph
-        g = mk_2d_graph(xy_ref, n, n)
+        g = mk_2d_graph(xy_ref, n_nodes, n_nodes)
         if args.plot:
             plot_graph(from_networkx(g), title=f"Mesh graph, level {lev}")
             plt.show()
             plt.savefig(f"mesh_level_{lev}.png")
         G.append(g)
+        #print resolution of the mesh
+        print(f"Mesh level {lev}: {n_nodes}x{n_nodes} nodes")
 
     if args.hierarchical:
         # Relabel nodes of each level with level index first
@@ -525,42 +524,6 @@ def main():
         joint_mesh_graph = networkx.union_all([graph for graph in G])
         all_mesh_nodes = joint_mesh_graph.nodes(data=True)
 
-    else:
-        # combine all levels to one graph
-        G_tot = G[0]
-        for lev in range(1, len(G)):
-            nodes = list(G[lev - 1].nodes)
-            n = int(np.sqrt(len(nodes)))
-            ij = (
-                np.array(nodes)
-                .reshape((n, n, 2))[1::nx, 1::nx, :]
-                .reshape(int(n / nx) ** 2, 2)
-            )
-            ij = [tuple(x) for x in ij]
-            G[lev] = networkx.relabel_nodes(G[lev], dict(zip(G[lev].nodes, ij)))
-            G_tot = networkx.compose(G_tot, G[lev])
-
-        # Relabel mesh nodes to start with 0
-        G_tot = prepend_node_index(G_tot, 0)
-
-        # relabel nodes to integers (sorted)
-        G_int = networkx.convert_node_labels_to_integers(
-            G_tot, first_label=0, ordering="sorted"
-        )
-
-        # Graph to use in g2m and m2g
-        G_bottom_mesh = G_tot
-        all_mesh_nodes = G_tot.nodes(data=True)
-
-        # export the nx graph to PyTorch geometric
-        pyg_m2m = from_networkx(G_int)
-        m2m_graphs = [pyg_m2m]
-        mesh_pos = [pyg_m2m.pos.to(torch.float32)]
-
-        if args.plot:
-            plot_graph(pyg_m2m, title="Mesh-to-mesh")
-            plt.show()
-            plt.savefig("mesh_to_mesh.png")
 
     # Save m2m edges
     save_edges_list(m2m_graphs, "m2m", graph_dir_path)

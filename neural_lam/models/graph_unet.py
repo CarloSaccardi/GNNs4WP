@@ -100,10 +100,7 @@ class GraphUNet(BaseGraphModule):
         """
         B = high_res.shape[0]
         # Grid embedding
-        grid_feats = torch.cat(
-            [high_res, self.expand_to_batch(self.grid_static_features, B)], dim=-1
-        )
-        high_res_emb = self.high_res_embedder(grid_feats)
+        high_res_emb = self.high_res_embedder(high_res)
 
         # Basic graph embeddings
         graph_emb = {

@@ -29,11 +29,11 @@ class BaseGraphModule(pl.LightningModule):
         self._init_static(args.dataset_cerra, args.dataset_era5)
 
         # Determine output dimensionality for grid predictions
-        base_dim = constants.GRID_STATE_DIM_CERRA
+        base_dim = constants.GRID_STATE_DIM_IN
         self.grid_output_dim = base_dim * (2 if self.output_std else 1)
         # Full node feature dimension: dynamic + static
-        _, static_dim = self.grid_static_features.shape
-        self.grid_dim = base_dim + static_dim
+        # _, static_dim = self.grid_static_features.shape
+        self.grid_dim = base_dim #+ static_dim
 
         # Loss function
         self.loss_fn = metrics.get_metric(self.loss)

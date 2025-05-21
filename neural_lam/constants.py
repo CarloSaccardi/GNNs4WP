@@ -138,7 +138,7 @@ PARAM_UNITS = [
 # Projection and grid
 # Hard coded for now, but should eventually be part of dataset desc. files
 GRID_SHAPE = (268, 238)  # (y, x)
-GRID_SHAPE_CERRA = (300, 300)  # (y, x)
+GRID_SHAPE_CERRA = (368, 368)  # (y, x)
 GRID_SHAPE_ERA5 = (81, 81)  # (y, x)
 
 LAMBERT_PROJ_PARAMS = {
@@ -195,8 +195,6 @@ LAMBERT_PROJ = cartopy.crs.LambertConformal(
 )
 
 # Data dimensions
-GRID_FORCING_DIM = 5 * 3 + 1  # 5 feat. for 3 time-step window + 1 batch-static
-GRID_FORCING_DIM_CERRA = 12
+GRID_STATE_DIM_IN = 15
+GRID_STATE_DIM_OUT = 5
 
-GRID_STATE_DIM = 17
-GRID_STATE_DIM_CERRA = 5
