@@ -155,7 +155,7 @@ class UNetWrapper(pl.LightningModule):
     def test_step(self, batch, batch_idx: int) -> dict:
         """
         Evaluate model on a test batch and store metrics.
-        Computes overall MSE, MAE, and SSIM as well as per-variable metrics.
+        Computes overall MSE, MAE, RMSE, and SSIM as well as per-variable metrics.
         """
         batch_size = batch[0].shape[0]
         img_clean, img_lr, diz_stats = batch
@@ -170,7 +170,6 @@ class UNetWrapper(pl.LightningModule):
             img_lr=img_lr
         )
         
-        
         high_res_mean = diz_stats["mean_CERRA"]
         high_res_std = diz_stats["std_CERRA"]
         low_res_mean = diz_stats["mean_era5"]
@@ -183,6 +182,7 @@ class UNetWrapper(pl.LightningModule):
         # Overall metrics across all variables.
         mse_all = torch.mean((predictions - ground_truth) ** 2)
         mae_all = torch.mean(torch.abs(predictions - ground_truth))
+        rmse_all = torch.sqrt(mse_all)
         
         from torchmetrics.functional import structural_similarity_index_measure as ssim_func
         overall_data_range = (ground_truth.max() - ground_truth.min()).item()
@@ -193,16 +193,19 @@ class UNetWrapper(pl.LightningModule):
         
         mse_vars = {}
         mae_vars = {}
+        rmse_vars = {}
         ssim_vars = {}
         for i, var_name in enumerate(var_names):
             # Extract the i-th variable (shape: (B, H, W)).
             pred_i = predictions[:, i, :, :]
             gt_i = ground_truth[:, i, :, :]
             
-            mse_vars[f"test_mse_{var_name}"] = torch.mean((pred_i - gt_i) ** 2)
+            mse_val = torch.mean((pred_i - gt_i) ** 2)
+            mse_vars[f"test_mse_{var_name}"] = mse_val
             mae_vars[f"test_mae_{var_name}"] = torch.mean(torch.abs(pred_i - gt_i))
+            rmse_vars[f"test_rmse_{var_name}"] = torch.sqrt(mse_val)
             
-            # SSIM expects the input to be (B, C, H, W); for a single channel, unsqueeze at the channel axis.
+            # SSIM expects the input to be (B, C, H, W); for a single channel, unsqueeze.
             data_range_i = (gt_i.max() - gt_i.min()).item()
             ssim_vars[f"test_ssim_{var_name}"] = ssim_func(pred_i.unsqueeze(1),
                                                             gt_i.unsqueeze(1),
@@ -212,18 +215,19 @@ class UNetWrapper(pl.LightningModule):
         log_metrics = {
             "test_mse": mse_all,
             "test_mae": mae_all,
+            "test_rmse": rmse_all,
             "test_ssim": ssim_all,
         }
         log_metrics.update(mse_vars)
         log_metrics.update(mae_vars)
+        log_metrics.update(rmse_vars)
         log_metrics.update(ssim_vars)
         
         self.log_dict(log_metrics, prog_bar=False, on_epoch=True, sync_dist=True)
         
-        
         self.test_metrics_and_plots(predictions, ground_truth, img_lr)
         
-        return log_metrics 
+        return log_metrics
     
     
     
