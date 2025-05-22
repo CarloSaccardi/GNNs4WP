@@ -170,15 +170,6 @@ class UNetWrapper(pl.LightningModule):
             img_lr=img_lr
         )
         
-        high_res_mean = diz_stats["mean_CERRA"]
-        high_res_std = diz_stats["std_CERRA"]
-        low_res_mean = diz_stats["mean_era5"]
-        low_res_std = diz_stats["std_era5"]
-        
-        predictions = predictions * high_res_std + high_res_mean
-        ground_truth = ground_truth * high_res_std + high_res_mean
-        img_lr = img_lr * low_res_std + low_res_mean
-        
         # Overall metrics across all variables.
         mse_all = torch.mean((predictions - ground_truth) ** 2)
         mae_all = torch.mean(torch.abs(predictions - ground_truth))
@@ -284,7 +275,7 @@ class UNetWrapper(pl.LightningModule):
         
         
         
-    def test_metrics_and_plots(self, prediction, high_res, img_lr):
+    def test_metrics_and_plots(self, prediction, high_res, img_lr, diz_stats):
         """
         Plot a random sample for a random variable from the batch. The figure includes 
         the low resolution input, target (high_res), prediction, and residual.
@@ -292,6 +283,15 @@ class UNetWrapper(pl.LightningModule):
         """
         import os
         import matplotlib.pyplot as plt
+        
+        high_res_mean = diz_stats["mean_CERRA"]
+        high_res_std = diz_stats["std_CERRA"]
+        low_res_mean = diz_stats["mean_era5"]
+        low_res_std = diz_stats["std_era5"]
+        
+        prediction = prediction * high_res_std + high_res_mean
+        high_res = high_res * high_res_std + high_res_mean
+        img_lr = img_lr * low_res_std + low_res_mean
 
         # Select a random sample from the batch and a random variable index.
         sample = random.randint(0, prediction.shape[0] - 1)
