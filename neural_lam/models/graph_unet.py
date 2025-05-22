@@ -218,6 +218,87 @@ class GraphUNet(BaseGraphModule):
         ):
             self.load_metrics_and_plots(prediction, ground_truth, batch_idx, mask=None)
             
+    def test_step(self, batch, batch_idx: int) -> dict:
+        """
+        Evaluate model on a test batch and store metrics.
+        Computes overall MSE, MAE, RMSE, and SSIM as well as per-variable metrics.
+        """
+        batch_size = batch[0].shape[0]
+        ground_truth, low_res, diz_stats = batch
+        ground_truth = ground_truth.float()
+        low_res = low_res.float()
+        
+        # Get loss, ground truth, and predictions from the loss function.
+        # Note: ground_truth and predictions are assumed to be in (B, C, H, W)
+        low_res_grid_emb, graph_emb = self.embed_all(low_res)
+        var_dist, predictions, _ = self.encode_decode(low_res_grid_emb, graph_emb)
+        
+        #reshape from (B, n_nodes, C) to (B, C, H, W) where H and W are 368x368
+        B, n_nodes, C = predictions.shape
+        C_low_res = low_res.shape[-1]
+        H, W = 368, 368
+        assert H * W == n_nodes
+
+        # swap and reshape in one go:
+        predictions = (
+            predictions
+            .permute(0, 2, 1)          # (B, C, n_nodes)
+            .view(B, C, H, W)          # (B, C, H, W)
+        )
+        # And do the same for ground_truth and low_res:
+        ground_truth = ground_truth.permute(0, 2, 1).view(B, C, H, W)
+        low_res     = low_res    .permute(0, 2, 1).view(B, C_low_res, H, W)
+         
+        # Overall metrics across all variables.
+        mse_all = torch.mean((predictions - ground_truth) ** 2)
+        mae_all = torch.mean(torch.abs(predictions - ground_truth))
+        rmse_all = torch.sqrt(mse_all)
+        
+        from torchmetrics.functional import structural_similarity_index_measure as ssim_func
+        overall_data_range = (ground_truth.max() - ground_truth.min()).item()
+        ssim_all = ssim_func(predictions, ground_truth, data_range=overall_data_range)
+        
+        # Define variable names in order.
+        var_names = ['u10', 'v10', 't2m', 'sshf', 'zust']
+        
+        mse_vars = {}
+        mae_vars = {}
+        rmse_vars = {}
+        ssim_vars = {}
+        for i, var_name in enumerate(var_names):
+            # Extract the i-th variable (shape: (B, H, W)).
+            pred_i = predictions[:, i, :, :]
+            gt_i = ground_truth[:, i, :, :]
+            
+            mse_val = torch.mean((pred_i - gt_i) ** 2)
+            mse_vars[f"test_mse_{var_name}"] = mse_val
+            mae_vars[f"test_mae_{var_name}"] = torch.mean(torch.abs(pred_i - gt_i))
+            rmse_vars[f"test_rmse_{var_name}"] = torch.sqrt(mse_val)
+            
+            # SSIM expects the input to be (B, C, H, W); for a single channel, unsqueeze.
+            data_range_i = (gt_i.max() - gt_i.min()).item()
+            ssim_vars[f"test_ssim_{var_name}"] = ssim_func(pred_i.unsqueeze(1),
+                                                            gt_i.unsqueeze(1),
+                                                            data_range=data_range_i)
+        
+        # Combine all metrics.
+        log_metrics = {
+            "test_mse": mse_all,
+            "test_mae": mae_all,
+            "test_rmse": rmse_all,
+            "test_ssim": ssim_all,
+        }
+        log_metrics.update(mse_vars)
+        log_metrics.update(mae_vars)
+        log_metrics.update(rmse_vars)
+        log_metrics.update(ssim_vars)
+        
+        self.log_dict(log_metrics, prog_bar=False, on_epoch=True, sync_dist=True)
+        
+        self.test_metrics_and_plots(predictions, ground_truth, low_res, diz_stats)
+        
+        return log_metrics
+            
             
     def load_metrics_and_plots(self, prediction, high_res, batch_idx, mask=None):
         
@@ -261,58 +342,120 @@ class GraphUNet(BaseGraphModule):
 
         plt.close("all") 
         
-    def test_step(self, batch, batch_idx: int) -> dict:
+        
+    def test_metrics_and_plots(self, prediction, high_res, img_lr, diz_stats):
         """
-        Evaluate model on a test batch and store metrics.
+        Plot a random sample for a random variable from the batch. The figure includes 
+        the low resolution input, target (high_res), prediction, and residual.
+        The overall figure title indicates the variable name, and the plot is saved.
         """
-        ground_truth, high_res = (
-            (batch[0], batch[1]) if isinstance(batch, (list, tuple)) and len(batch) == 2
-            else (batch, None)
-        )
-        high_res_emb, graph_emb = self.embed_all(high_res)
-        latent_dist, pred_mean, _ = self.encode_decode(high_res_emb, graph_emb)
-        mse, _ = utils.compute_MSE_entiregrid(pred_mean, ground_truth)
-        mae, _ = utils.compute_MAE_entiregrid(pred_mean, ground_truth)
-        # If mask available, compute masked metrics
-        mask = graph_emb.get("mask")
-        if mask is not None:
-            mse_masked, _ = utils.compute_MSE_masked(pred_mean, ground_truth, mask)
-            mae_masked, _ = utils.compute_MAE_masked(pred_mean, ground_truth, mask)
-        else:
-            mse_masked = mae_masked = torch.tensor(float('nan'), device=pred_mean.device)
+        import os
+        import matplotlib.pyplot as plt
+        
+        high_res_mean = diz_stats["mean_CERRA"].unsqueeze(-1).unsqueeze(-1)
+        high_res_std = diz_stats["std_CERRA"].unsqueeze(-1).unsqueeze(-1)
+        low_res_mean = diz_stats["mean_era5"].unsqueeze(-1).unsqueeze(-1)
+        low_res_std = diz_stats["std_era5"].unsqueeze(-1).unsqueeze(-1)
+        
+        prediction = prediction * high_res_std + high_res_mean
+        high_res = high_res * high_res_std + high_res_mean
+        img_lr = img_lr * low_res_std + low_res_mean
 
-        self.test_MSEs.append(mse)
-        self.test_MAEs.append(mae)
-        self.test_MSEs_masked.append(mse_masked)
-        self.test_MAEs_masked.append(mae_masked)
+        # Select a random sample from the batch and a random variable index.
+        sample = random.randint(0, prediction.shape[0] - 1)
+        var_i = random.randint(0, prediction.shape[1] - 1)
+        
+        # Retrieve variable name and unit from constants.
+        var_name = constants.PARAM_NAMES_SHORT_CERRA[var_i]
+        var_unit = constants.PARAM_UNITS_CERRA[var_i]
+        
+        # Extract the images for the selected variable and sample.
+        input_img = img_lr[sample, var_i, :, :].detach().cpu().numpy()
+        target_img = high_res[sample, var_i, :, :].detach().cpu().numpy()
+        pred_img   = prediction[sample, var_i, :, :].detach().cpu().numpy()
+        residual_img = target_img - pred_img
+        
+        # Create a plot with four subplots.
+        fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+        
+        axes[0].imshow(input_img, cmap='plasma', origin='lower')
+        axes[0].set_title("Input")
+        axes[0].axis("off")
+        
+        axes[1].imshow(target_img, cmap='plasma', origin='lower')
+        axes[1].set_title("Target")
+        axes[1].axis("off")
+        
+        axes[2].imshow(pred_img, cmap='plasma', origin='lower')
+        axes[2].set_title("Prediction")
+        axes[2].axis("off")
+        
+        axes[3].imshow(residual_img, cmap='plasma', origin='lower')
+        axes[3].set_title("Residual")
+        axes[3].axis("off")
+        
+        # Set overall title with variable name and unit.
+        fig.suptitle(f"{var_name} ({var_unit})", fontsize=16)
+        
+        # Save plot to a given folder.
+        save_dir = "plot_tests"
+        os.makedirs(save_dir, exist_ok=True)
+        filename = os.path.join(save_dir, f"{var_name}_sample_{sample}.png")
+        fig.savefig(filename, bbox_inches='tight')
+        plt.close(fig)
+        
+    # def test_step(self, batch, batch_idx: int) -> dict:
+    #     """
+    #     Evaluate model on a test batch and store metrics.
+    #     """
+    #     ground_truth, high_res = (
+    #         (batch[0], batch[1]) if isinstance(batch, (list, tuple)) and len(batch) == 2
+    #         else (batch, None)
+    #     )
+    #     high_res_emb, graph_emb = self.embed_all(high_res)
+    #     latent_dist, pred_mean, _ = self.encode_decode(high_res_emb, graph_emb)
+    #     mse, _ = utils.compute_MSE_entiregrid(pred_mean, ground_truth)
+    #     mae, _ = utils.compute_MAE_entiregrid(pred_mean, ground_truth)
+    #     # If mask available, compute masked metrics
+    #     mask = graph_emb.get("mask")
+    #     if mask is not None:
+    #         mse_masked, _ = utils.compute_MSE_masked(pred_mean, ground_truth, mask)
+    #         mae_masked, _ = utils.compute_MAE_masked(pred_mean, ground_truth, mask)
+    #     else:
+    #         mse_masked = mae_masked = torch.tensor(float('nan'), device=pred_mean.device)
 
-        self.log_dict({
-            "test_mse": mse,
-            "test_mae": mae,
-            "test_mse_masked": mse_masked,
-            "test_mae_masked": mae_masked,
-        }, prog_bar=False, on_epoch=True, sync_dist=True)
+    #     self.test_MSEs.append(mse)
+    #     self.test_MAEs.append(mae)
+    #     self.test_MSEs_masked.append(mse_masked)
+    #     self.test_MAEs_masked.append(mae_masked)
 
-        return {"test_mse": mse, "test_mae": mae,
-                "test_mse_masked": mse_masked, "test_mae_masked": mae_masked}
+    #     self.log_dict({
+    #         "test_mse": mse,
+    #         "test_mae": mae,
+    #         "test_mse_masked": mse_masked,
+    #         "test_mae_masked": mae_masked,
+    #     }, prog_bar=False, on_epoch=True, sync_dist=True)
 
-    def on_test_epoch_end(self) -> None:
-        """
-        Aggregate and log test metrics at epoch end.
-        """
-        def mean(tensor_list):
-            return torch.stack([t for t in tensor_list if not torch.isnan(t)]).mean()
+    #     return {"test_mse": mse, "test_mae": mae,
+    #             "test_mse_masked": mse_masked, "test_mae_masked": mae_masked}
 
-        metrics = {
-            "test_mse_mean": mean(self.test_MSEs),
-            "test_mae_mean": mean(self.test_MAEs),
-            "test_mse_masked_mean": mean(self.test_MSEs_masked),
-            "test_mae_masked_mean": mean(self.test_MAEs_masked),
-        }
-        self.log_dict(metrics, prog_bar=True, sync_dist=True)
-        print(
-            f"Test MSE: {metrics['test_mse_mean']:.4f}, "
-            f"MAE: {metrics['test_mae_mean']:.4f}\n"
-            f"Masked MSE: {metrics['test_mse_masked_mean']:.4f}, "
-            f"Masked MAE: {metrics['test_mae_masked_mean']:.4f}"
-        )
+    # def on_test_epoch_end(self) -> None:
+    #     """
+    #     Aggregate and log test metrics at epoch end.
+    #     """
+    #     def mean(tensor_list):
+    #         return torch.stack([t for t in tensor_list if not torch.isnan(t)]).mean()
+
+    #     metrics = {
+    #         "test_mse_mean": mean(self.test_MSEs),
+    #         "test_mae_mean": mean(self.test_MAEs),
+    #         "test_mse_masked_mean": mean(self.test_MSEs_masked),
+    #         "test_mae_masked_mean": mean(self.test_MAEs_masked),
+    #     }
+    #     self.log_dict(metrics, prog_bar=True, sync_dist=True)
+    #     print(
+    #         f"Test MSE: {metrics['test_mse_mean']:.4f}, "
+    #         f"MAE: {metrics['test_mae_mean']:.4f}\n"
+    #         f"Masked MSE: {metrics['test_mse_masked_mean']:.4f}, "
+    #         f"Masked MAE: {metrics['test_mae_masked_mean']:.4f}"
+    #     )

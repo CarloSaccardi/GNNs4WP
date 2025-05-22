@@ -2,13 +2,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # ── data ────────────────────────────────────────────────────────────────
-mask_ratios = ["5", "25", "50", "75", "100", "GNN-Unet", "CorrDiff's Unet"]
-full_loss_test_mse = [0.0035, 0.0149, 0.0301, 0.0446, 0.0620, 0.0606, 0.0511]
+mask_ratios = ["5", "25", "50", "75", "100"]
+full_loss_test_mse = [0.0035, 0.0149, 0.0301, 0.0446, 0.0620]
 
 x = np.arange(len(mask_ratios))
 
 # colour palette (last two bars in orange / red)
-colors = ['C0'] * (len(mask_ratios) - 2) + ['orange', 'red']
+colors = ['C0'] * (len(mask_ratios))
 
 # ── plot ────────────────────────────────────────────────────────────────
 fig, ax = plt.subplots(figsize=(9, 6))
@@ -30,7 +30,7 @@ ax.set_ylim(0, max(full_loss_test_mse) * 1.15)
 # cosmetics
 ax.set_xticks(x)
 ax.set_xticklabels(mask_ratios, rotation=20, ha='right')
-ax.set_xlabel("Masking Ratio / Model")
+ax.set_xlabel("Masking Ratio")
 ax.set_ylabel("Test MSE")
 ax.set_title("Full-loss Test MSE")
 ax.grid(axis='y', linestyle='--', alpha=0.3)

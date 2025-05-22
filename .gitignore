@@ -82,6 +82,8 @@ figures/*
 
 DebugLogs/*
 
+plot_tests/*
+
 bash_files/*
 configs/*
 *.log
