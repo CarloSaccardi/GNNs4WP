@@ -300,7 +300,7 @@ class UNetWrapper(pl.LightningModule):
         input_img = img_lr[sample, var_i, :, :].detach().cpu().numpy()
         target_img = high_res[sample, var_i, :, :].detach().cpu().numpy()
         pred_img   = prediction[sample, var_i, :, :].detach().cpu().numpy()
-        residual_img = pred_img - target_img
+        residual_img = target_img - pred_img
         
         # Create a plot with four subplots.
         fig, axes = plt.subplots(1, 4, figsize=(20, 5))
