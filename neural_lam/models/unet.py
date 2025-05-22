@@ -216,7 +216,7 @@ class UNetWrapper(pl.LightningModule):
         
         self.log_dict(log_metrics, prog_bar=False, on_epoch=True, sync_dist=True)
         
-        self.test_metrics_and_plots(predictions, ground_truth, img_lr)
+        self.test_metrics_and_plots(predictions, ground_truth, img_lr, diz_stats)
         
         return log_metrics
     
@@ -330,7 +330,7 @@ class UNetWrapper(pl.LightningModule):
         fig.suptitle(f"{var_name} ({var_unit})", fontsize=16)
         
         # Save plot to a given folder.
-        save_dir = "plots"
+        save_dir = "plot_tests"
         os.makedirs(save_dir, exist_ok=True)
         filename = os.path.join(save_dir, f"{var_name}_sample_{sample}.png")
         fig.savefig(filename, bbox_inches='tight')
