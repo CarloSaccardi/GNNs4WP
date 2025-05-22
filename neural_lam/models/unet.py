@@ -150,6 +150,76 @@ class UNetWrapper(pl.LightningModule):
             and self.wandb_project is not None
         ):
             self.load_metrics_and_plots(predictions, ground_truth, batch_idx, mask=None)
+    
+    
+    def test_step(self, batch, batch_idx: int) -> dict:
+        """
+        Evaluate model on a test batch and store metrics.
+        Computes overall MSE, MAE, and SSIM as well as per-variable metrics.
+        """
+        batch_size = batch[0].shape[0]
+        img_clean, img_lr, diz_stats = batch
+        img_clean = img_clean.float()
+        img_lr = img_lr.float()
+        
+        # Get loss, ground truth, and predictions from the loss function.
+        # Note: ground_truth and predictions are assumed to be in (B, C, H, W)
+        _, ground_truth, predictions = self.loss_fn(
+            net=self,
+            img_clean=img_clean,
+            img_lr=img_lr
+        )
+        
+        # Overall metrics across all variables.
+        mse_all = torch.mean((predictions - ground_truth) ** 2)
+        mae_all = torch.mean(torch.abs(predictions - ground_truth))
+        
+        from torchmetrics.functional import structural_similarity_index_measure as ssim_func
+        overall_data_range = (ground_truth.max() - ground_truth.min()).item()
+        ssim_all = ssim_func(predictions, ground_truth, data_range=overall_data_range)
+        
+        # Define variable names in order.
+        var_names = ['u10', 'v10', 't2m', 'sshf', 'zust']
+        
+        mse_vars = {}
+        mae_vars = {}
+        ssim_vars = {}
+        for i, var_name in enumerate(var_names):
+            # Extract the i-th variable (shape: (B, H, W)).
+            pred_i = predictions[:, i, :, :]
+            gt_i = ground_truth[:, i, :, :]
+            
+            mse_vars[f"test_mse_{var_name}"] = torch.mean((pred_i - gt_i) ** 2)
+            mae_vars[f"test_mae_{var_name}"] = torch.mean(torch.abs(pred_i - gt_i))
+            
+            # SSIM expects the input to be (B, C, H, W); for a single channel, unsqueeze at the channel axis.
+            data_range_i = (gt_i.max() - gt_i.min()).item()
+            ssim_vars[f"test_ssim_{var_name}"] = ssim_func(pred_i.unsqueeze(1),
+                                                            gt_i.unsqueeze(1),
+                                                            data_range=data_range_i)
+        
+        # Combine all metrics.
+        log_metrics = {
+            "test_mse": mse_all,
+            "test_mae": mae_all,
+            "test_ssim": ssim_all,
+        }
+        log_metrics.update(mse_vars)
+        log_metrics.update(mae_vars)
+        log_metrics.update(ssim_vars)
+        
+        self.log_dict(log_metrics, prog_bar=False, on_epoch=True, sync_dist=True)
+        
+        
+        self.test_metrics_and_plots(predictions, ground_truth, img_lr, diz_stats)
+        
+        return log_metrics 
+    
+    
+    
+    def configure_optimizers(self):
+        opt = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        return opt
             
             
     def load_metrics_and_plots(self, prediction, high_res, batch_idx, mask=None):
@@ -197,14 +267,69 @@ class UNetWrapper(pl.LightningModule):
             wandb.log(log_plot_dict)
 
         plt.close("all")   
+        
+        
+        
+    def test_metrics_and_plots(self, prediction, high_res, img_lr, diz_stats):
+        """
+        Plot a random sample for a random variable from the batch. The figure includes 
+        the low resolution input, target (high_res), prediction, and residual.
+        The overall figure title indicates the variable name, and the plot is saved.
+        """
+        import os
+        import matplotlib.pyplot as plt
+        
+        high_res_mean = diz_stats["mean_CERRA"]
+        high_res_std = diz_stats["std_CERRA"]
+        low_res_mean = diz_stats["mean_era5"]
+        low_res_std = diz_stats["std_era5"]
+        
+        prediction = prediction * high_res_std + high_res_mean
+        high_res = high_res * high_res_std + high_res_mean
+        img_lr = img_lr * low_res_std + low_res_mean
 
-    
-
-    def configure_optimizers(self):
-        opt = torch.optim.Adam(self.model.parameters(), lr=self.lr)
-        return opt
-    
-    
+        # Select a random sample from the batch and a random variable index.
+        sample = random.randint(0, prediction.shape[0] - 1)
+        var_i = random.randint(0, prediction.shape[1] - 1)
+        
+        # Retrieve variable name and unit from constants.
+        var_name = constants.PARAM_NAMES_SHORT_CERRA[var_i]
+        var_unit = constants.PARAM_UNITS_CERRA[var_i]
+        
+        # Extract the images for the selected variable and sample.
+        input_img = img_lr[sample, var_i, :, :].detach().cpu().numpy()
+        target_img = high_res[sample, var_i, :, :].detach().cpu().numpy()
+        pred_img   = prediction[sample, var_i, :, :].detach().cpu().numpy()
+        residual_img = pred_img - target_img
+        
+        # Create a plot with four subplots.
+        fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+        
+        axes[0].imshow(input_img, cmap='plasma', origin='lower')
+        axes[0].set_title("Input")
+        axes[0].axis("off")
+        
+        axes[1].imshow(target_img, cmap='plasma', origin='lower')
+        axes[1].set_title("Target")
+        axes[1].axis("off")
+        
+        axes[2].imshow(pred_img, cmap='plasma', origin='lower')
+        axes[2].set_title("Prediction")
+        axes[2].axis("off")
+        
+        axes[3].imshow(residual_img, cmap='plasma', origin='lower')
+        axes[3].set_title("Residual")
+        axes[3].axis("off")
+        
+        # Set overall title with variable name and unit.
+        fig.suptitle(f"{var_name} ({var_unit})", fontsize=16)
+        
+        # Save plot to a given folder.
+        save_dir = "plots"
+        os.makedirs(save_dir, exist_ok=True)
+        filename = os.path.join(save_dir, f"{var_name}_sample_{sample}.png")
+        fig.savefig(filename, bbox_inches='tight')
+        plt.close(fig)
     
     
 class RegressionLoss:
