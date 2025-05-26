@@ -12,6 +12,7 @@ from lightning_fabric.utilities import seed
 from neural_lam import constants, utils
 from neural_lam.models.mask_efm import GraphEFM
 from neural_lam.models.unet import UNetWrapper
+from neural_lam.models.diffusion import DiffusionWrapper
 from neural_lam.models.graphcast import GraphCast
 from neural_lam.weather_dataset import ERA5toCERRA2
 import os
@@ -23,6 +24,7 @@ MODELS = {
     "graphcast": GraphCast,
     "graph_efm": GraphEFM,
     "UNet-CNN": UNetWrapper,
+    "Diffusion": DiffusionWrapper
 }
 
 
@@ -213,6 +215,23 @@ def get_args():
         type=int,
         default=0,
         help="Checkpoint level for the model (default: 1)",
+    )
+    parser.add_argument(
+        "--regression_net",
+        type=str,
+        help="Path to load model parameters from regression step.",
+    )
+    parser.add_argument(
+        "--gridtype",
+        type=str,
+        help="Type of positional grid to use: 'sinusoidal', 'learnable', 'linear', or 'test'.",
+    )
+    #args.hr_mean_conditioning
+    parser.add_argument(
+        "--hr_mean_conditioning",
+        type=bool,
+        default=True,
+        help="Condition on regression model prediction or not",
     )
     return parser.parse_args()
 
