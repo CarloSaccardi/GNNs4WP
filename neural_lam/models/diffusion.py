@@ -1,12 +1,18 @@
 import importlib
 from physicsnemo.utils.patching import RandomPatching2D
-from typing import Callable, Optional, Literal, Tuple, Union
+from physicsnemo.models.diffusion import EDMPrecond
+from typing import Callable, Optional, List, Tuple, Union
 
 from torch import Tensor
 import nvtx
 import torch
 from neural_lam.models.unet import UNetWrapper
 import pytorch_lightning as pl
+from neural_lam.utils import stochastic_sampler, diffusion_step
+from functools import partial
+
+from neural_lam import constants
+import random
 
 network_module = importlib.import_module("physicsnemo.models.diffusion")
 
@@ -77,14 +83,13 @@ class DiffusionWrapper(pl.LightningModule):
         if args.hr_mean_conditioning:
             self.img_in_channels += self.img_out_channels
         self.sigma_data: float = 0.5
-        self.igma_min=0.0
+        self.sigma_min=0.0
         self.sigma_max=float("inf")
         
         self.lr = args.lr
         
-        self.regression_net = args.regression_net
-        
         self.regression_net = UNetWrapper.load_from_checkpoint( args.regression_net, args=args)
+            
         if args.restore_opt:
             # Save for later
             # Unclear if this works for multi-GPU
@@ -113,6 +118,27 @@ class DiffusionWrapper(pl.LightningModule):
             regression_net=self.regression_net,
             hr_mean_conditioning=args.hr_mean_conditioning
         )
+        
+    @staticmethod
+    def round_sigma(sigma: Union[float, List, torch.Tensor]) -> torch.Tensor:
+        """
+        Convert a given sigma value(s) to a tensor representation.
+
+        Parameters
+        ----------
+        sigma : Union[float, List, torch.Tensor]
+            Sigma value(s) to convert.
+
+        Returns
+        -------
+        torch.Tensor
+            Tensor representation of sigma values.
+
+        See Also
+        --------
+        EDMPrecond.round_sigma
+        """
+        return EDMPrecond.round_sigma(sigma)
 
     @staticmethod
     def _scaling_fn(
@@ -251,9 +277,164 @@ class DiffusionWrapper(pl.LightningModule):
             )
         return opt
     
+    def test_step(self, batch, *args):
+        batch_size = batch[0].shape[0]
+        img_clean, img_lr, diz_stats = batch
+        img_clean = img_clean.float()
+        img_lr = img_lr.float()
+        
+        y_mean = self.regression_net(
+                torch.zeros_like(img_clean, device=img_clean.device),
+                img_lr,
+                augment_labels=None,
+            )
+        
+        sampler_fn = partial(stochastic_sampler, patching=None)
+        
+        # === prepare the seed batches exactly like before ===
+        seeds = torch.arange(32, device=self.device)
+        num_batches = (
+            (len(seeds) - 1) // (batch_size * self.trainer.world_size) + 1
+        ) * self.trainer.world_size
+        rank_batches = seeds.tensor_split(num_batches)[self.global_rank::self.trainer.world_size]
+        
+        y_res = diffusion_step(
+                            net=self,
+                            sampler_fn=sampler_fn,
+                            img_shape=tuple(self.img_resolution),
+                            img_out_channels=self.img_out_channels,
+                            rank_batches=rank_batches,
+                            img_lr=img_lr.expand(
+                                batch_size, -1, -1, -1
+                            ).to(memory_format=torch.channels_last),
+                            rank=self.global_rank,
+                            device=self.device,
+                            mean_hr=y_mean,
+                            lead_time_label=None,
+                        )
+        
+        y_res_avg = y_res.mean(dim=0, keepdim=True)
+        y_out =  y_res_avg + y_mean
+        
+        # Get loss, ground truth, and predictions from the loss function.
+        # Note: ground_truth and predictions are assumed to be in (B, C, H, W)
+        _, ground_truth, predictions = self.loss_fn(
+            net=self,
+            img_clean=img_clean,
+            img_lr=img_lr
+        )
+        
+        # Overall metrics across all variables.
+        mse_all = torch.mean((predictions - ground_truth) ** 2)
+        mae_all = torch.mean(torch.abs(predictions - ground_truth))
+        rmse_all = torch.sqrt(mse_all)
+        
+        from torchmetrics.functional import structural_similarity_index_measure as ssim_func
+        overall_data_range = (ground_truth.max() - ground_truth.min()).item()
+        ssim_all = ssim_func(predictions, ground_truth, data_range=overall_data_range)
+        
+        # Define variable names in order.
+        var_names = ['u10', 'v10', 't2m', 'sshf', 'zust']
+        
+        mse_vars = {}
+        mae_vars = {}
+        rmse_vars = {}
+        ssim_vars = {}
+        for i, var_name in enumerate(var_names):
+            # Extract the i-th variable (shape: (B, H, W)).
+            pred_i = predictions[:, i, :, :]
+            gt_i = ground_truth[:, i, :, :]
+            
+            mse_val = torch.mean((pred_i - gt_i) ** 2)
+            mse_vars[f"test_mse_{var_name}"] = mse_val
+            mae_vars[f"test_mae_{var_name}"] = torch.mean(torch.abs(pred_i - gt_i))
+            rmse_vars[f"test_rmse_{var_name}"] = torch.sqrt(mse_val)
+            
+            # SSIM expects the input to be (B, C, H, W); for a single channel, unsqueeze.
+            data_range_i = (gt_i.max() - gt_i.min()).item()
+            ssim_vars[f"test_ssim_{var_name}"] = ssim_func(pred_i.unsqueeze(1),
+                                                            gt_i.unsqueeze(1),
+                                                            data_range=data_range_i)
+        
+        # Combine all metrics.
+        log_metrics = {
+            "test_mse": mse_all,
+            "test_mae": mae_all,
+            "test_rmse": rmse_all,
+            "test_ssim": ssim_all,
+        }
+        log_metrics.update(mse_vars)
+        log_metrics.update(mae_vars)
+        log_metrics.update(rmse_vars)
+        log_metrics.update(ssim_vars)
+        
+        self.log_dict(log_metrics, prog_bar=False, on_epoch=True, sync_dist=True)
+        
+        self.test_metrics_and_plots(predictions, ground_truth, img_lr, diz_stats)
+        
+        return log_metrics
     
-    
-    
+    def test_metrics_and_plots(self, prediction, high_res, img_lr, diz_stats):
+        """
+        Plot a random sample for a random variable from the batch. The figure includes 
+        the low resolution input, target (high_res), prediction, and residual.
+        The overall figure title indicates the variable name, and the plot is saved.
+        """
+        import os
+        import matplotlib.pyplot as plt
+        
+        high_res_mean = diz_stats["mean_CERRA"]
+        high_res_std = diz_stats["std_CERRA"]
+        low_res_mean = diz_stats["mean_era5"]
+        low_res_std = diz_stats["std_era5"]
+        
+        prediction = prediction * high_res_std + high_res_mean
+        high_res = high_res * high_res_std + high_res_mean
+        img_lr = img_lr * low_res_std + low_res_mean
+
+        # Select a random sample from the batch and a random variable index.
+        sample = random.randint(0, prediction.shape[0] - 1)
+        var_i = random.randint(0, prediction.shape[1] - 1)
+        
+        # Retrieve variable name and unit from constants.
+        var_name = constants.PARAM_NAMES_SHORT_CERRA[var_i]
+        var_unit = constants.PARAM_UNITS_CERRA[var_i]
+        
+        # Extract the images for the selected variable and sample.
+        input_img = img_lr[sample, var_i, :, :].detach().cpu().numpy()
+        target_img = high_res[sample, var_i, :, :].detach().cpu().numpy()
+        pred_img   = prediction[sample, var_i, :, :].detach().cpu().numpy()
+        residual_img = target_img - pred_img
+        
+        # Create a plot with four subplots.
+        fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+        
+        axes[0].imshow(input_img, cmap='plasma', origin='lower')
+        axes[0].set_title("Input")
+        axes[0].axis("off")
+        
+        axes[1].imshow(target_img, cmap='plasma', origin='lower')
+        axes[1].set_title("Target")
+        axes[1].axis("off")
+        
+        axes[2].imshow(pred_img, cmap='plasma', origin='lower')
+        axes[2].set_title("Prediction")
+        axes[2].axis("off")
+        
+        axes[3].imshow(residual_img, cmap='plasma', origin='lower')
+        axes[3].set_title("Residual")
+        axes[3].axis("off")
+        
+        # Set overall title with variable name and unit.
+        fig.suptitle(f"{var_name} ({var_unit})", fontsize=16)
+        
+        # Save plot to a given folder.
+        save_dir = "plot_tests"
+        os.makedirs(save_dir, exist_ok=True)
+        filename = os.path.join(save_dir, f"{var_name}_sample_{sample}.png")
+        fig.savefig(filename, bbox_inches='tight')
+        plt.close(fig)
+        
 class ResidualLoss:
     """
     Mixture loss function for denoising score matching.

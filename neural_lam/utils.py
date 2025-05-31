@@ -1,22 +1,406 @@
-# Standard library
-import os
+# SPDX-FileCopyrightText: Copyright (c) 2023 - 2024 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-# Third-party
-import numpy as np
+import nvtx
 import torch
-import torch_geometric as pyg
-from torch import nn
+import tqdm
+import os
+from physicsnemo.utils.generative import StackedRandomGenerator
 from tueplots import bundles, figsizes
 
-# First-party
-from neural_lam import constants
-from neural_lam.models.interaction_net import InteractionNet
-import matplotlib.pyplot as plt
-import easydict
-from pyproj import Transformer
-from neural_lam import constants
-import xarray as xr
-import cfgrib
+from typing import Callable, Optional
+
+import torch
+from torch import Tensor
+
+from physicsnemo.utils.patching import GridPatching2D
+
+
+def stochastic_sampler(
+    net: torch.nn.Module,
+    latents: Tensor,
+    img_lr: Tensor,
+    class_labels: Optional[Tensor] = None,
+    randn_like: Callable[[Tensor], Tensor] = torch.randn_like,
+    patching: Optional[GridPatching2D] = None,
+    mean_hr: Optional[Tensor] = None,
+    lead_time_label: Optional[Tensor] = None,
+    num_steps: int = 18,
+    sigma_min: float = 0.002,
+    sigma_max: float = 800,
+    rho: float = 7,
+    S_churn: float = 0,
+    S_min: float = 0,
+    S_max: float = float("inf"),
+    S_noise: float = 1,
+) -> Tensor:
+    """
+    Proposed EDM sampler (Algorithm 2) with minor changes to enable
+    super-resolution and patch-based diffusion.
+
+    Parameters
+    ----------
+    net : torch.nn.Module
+        The neural network model that generates denoised images from noisy
+        inputs.
+        Expected signature: `net(x, x_lr, t_hat, class_labels,
+        lead_time_label=lead_time_label, embedding_selector=embedding_selector)`,
+        where:
+            x (torch.Tensor): Noisy input of shape (batch_size, C_out, H, W)
+            x_lr (torch.Tensor): Conditioning input of shape (batch_size, C_cond, H, W)
+            t_hat (torch.Tensor): Noise level of shape (batch_size, 1, 1, 1) or scalar
+            class_labels (torch.Tensor, optional): Optional class labels
+            lead_time_label (torch.Tensor, optional): Optional lead time labels
+            embedding_selector (callable, optional): Function to select
+            positional embeddings. Used for patch-based diffusion.
+        Returns:
+            torch.Tensor: Denoised prediction of shape (batch_size, C_out, H, W)
+
+        Required attributes:
+            sigma_min (float): Minimum supported noise level for the model
+            sigma_max (float): Maximum supported noise level for the model
+            round_sigma (callable): Method to convert sigma values to tensor representation
+    latents : Tensor
+        The latent variables (e.g., noise) used as the initial input for the
+        sampler. Has shape (batch_size, C_out, img_shape_y, img_shape_x).
+    img_lr : Tensor
+        Low-resolution input image for conditioning the super-resolution
+        process. Must have shape (batch_size, C_lr, img_lr_ shape_y,
+        img_lr_shape_x).
+    class_labels : Optional[Tensor], optional
+        Class labels for conditional generation, if required by the model. By
+        default None.
+    randn_like : Callable[[Tensor], Tensor]
+        Function to generate random noise with the same shape as the input
+        tensor.
+        By default torch.randn_like.
+    patching : Optional[GridPatching2D], optional
+        A patching utility for patch-based diffusion. Implements methods to
+        extract patches from an image and batch the patches along `dim=0`.
+        Should also implement a `fuse` method to reconstruct the original image
+       from a batch of patches. See
+       :class:`physicsnemo.utils.patching.GridPatching2D` for details. By
+       default None, in which case non-patched diffusion is used.
+    mean_hr : Optional[Tensor], optional
+        Optional tensor containing mean high-resolution images for
+        conditioning. Must have same height and width as `img_lr`, with shape
+        (B_hr, C_hr, img_lr_shape_y, img_lr_shape_x)  where the batch dimension
+        B_hr can be either 1, either equal to batch_size, or can be omitted. If
+        B_hr = 1 or is omitted, `mean_hr` will be expanded to match the shape
+        of `img_lr`. By default None.
+    lead_time_label : Optional[Tensor], optional
+        Optional lead time labels. By default None.
+    num_steps : int
+        Number of time steps for the sampler. By default 18.
+    sigma_min : float
+        Minimum noise level. By default 0.002.
+    sigma_max : float
+        Maximum noise level. By default 800.
+    rho : float
+        Exponent used in the time step discretization. By default 7.
+    S_churn : float
+        Churn parameter controlling the level of noise added in each step. By
+        default 0.
+    S_min : float
+        Minimum time step for applying churn. By default 0.
+    S_max : float
+        Maximum time step for applying churn. By default float("inf").
+    S_noise : float
+        Noise scaling factor applied during the churn step. By default 1.
+
+    Returns
+    -------
+    Tensor
+        The final denoised image produced by the sampler. Same shape as
+        `latents`: (batch_size, C_out, img_shape_y, img_shape_x).
+
+    See Also
+    --------
+    :class:`physicsnemo.models.diffusion.EDMPrecondSuperResolution`: A model
+        wrapper that provides preconditioning for super-resolution diffusion
+        models and implements the required interface for this sampler.
+    """
+
+    # Adjust noise levels based on what's supported by the network.
+    # Proposed EDM sampler (Algorithm 2) with minor changes to enable
+    # super-resolution/
+    sigma_min = max(sigma_min, net.sigma_min)
+    sigma_max = min(sigma_max, net.sigma_max)
+
+    # Safety check on type of patching
+    if patching is not None and not isinstance(patching, GridPatching2D):
+        raise ValueError("patching must be an instance of GridPatching2D.")
+
+    # Safety check: if patching is used then img_lr and latents must have same
+    # height and width, otherwise there is mismatch in the number
+    # of patches extracted to form the final batch_size.
+    if patching:
+        if img_lr.shape[-2:] != latents.shape[-2:]:
+            raise ValueError(
+                f"img_lr and latents must have the same height and width, "
+                f"but found {img_lr.shape[-2:]} vs {latents.shape[-2:]}. "
+            )
+    # img_lr and latents must also have the same batch_size, otherwise mismatch
+    # when processed by the network
+    if img_lr.shape[0] != latents.shape[0]:
+        raise ValueError(
+            f"img_lr and latents must have the same batch size, but found "
+            f"{img_lr.shape[0]} vs {latents.shape[0]}."
+        )
+
+    # Time step discretization.
+    step_indices = torch.arange(num_steps, dtype=torch.float64, device=latents.device)
+    t_steps = (
+        sigma_max ** (1 / rho)
+        + step_indices
+        / (num_steps - 1)
+        * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))
+    ) ** rho
+    t_steps = torch.cat(
+        [net.round_sigma(t_steps), torch.zeros_like(t_steps[:1])]
+    )  # t_N = 0
+
+    batch_size = img_lr.shape[0]
+
+    # conditioning = [mean_hr, img_lr, global_lr, pos_embd]
+    x_lr = img_lr
+    if mean_hr is not None:
+        if mean_hr.shape[-2:] != img_lr.shape[-2:]:
+            raise ValueError(
+                f"mean_hr and img_lr must have the same height and width, "
+                f"but found {mean_hr.shape[-2:]} vs {img_lr.shape[-2:]}."
+            )
+        x_lr = torch.cat((mean_hr.expand(x_lr.shape[0], -1, -1, -1), x_lr), dim=1)
+
+    # input and position padding + patching
+    if patching:
+        # Patched conditioning [x_lr, mean_hr]
+        # (batch_size * patch_num, C_in + C_out, patch_shape_y, patch_shape_x)
+        x_lr = patching.apply(input=x_lr, additional_input=img_lr)
+
+        # Function to select the correct positional embedding for each patch
+        def patch_embedding_selector(emb):
+            # emb: (N_pe, image_shape_y, image_shape_x)
+            # return: (batch_size * patch_num, N_pe, patch_shape_y, patch_shape_x)
+            return patching.apply(emb[None].expand(batch_size, -1, -1, -1))
+
+    else:
+        patch_embedding_selector = None
+
+    # Main sampling loop.
+    x_next = latents.to(torch.float64) * t_steps[0]
+    for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])):  # 0, ..., N-1
+        x_cur = x_next
+        # Increase noise temporarily.
+        gamma = S_churn / num_steps if S_min <= t_cur <= S_max else 0
+        t_hat = net.round_sigma(t_cur + gamma * t_cur)
+
+        x_hat = x_cur + (t_hat**2 - t_cur**2).sqrt() * S_noise * randn_like(x_cur)
+
+        # Euler step. Perform patching operation on score tensor if patch-based
+        # generation is used denoised = net(x_hat, t_hat,
+        # class_labels,lead_time_label=lead_time_label).to(torch.float64)
+
+        x_hat_batch = (patching.apply(input=x_hat) if patching else x_hat).to(
+            latents.device
+        )
+        x_lr = x_lr.to(latents.device)
+
+        if lead_time_label is not None:
+            denoised = net(
+                x_hat_batch,
+                x_lr,
+                t_hat,
+                class_labels,
+                lead_time_label=lead_time_label,
+                embedding_selector=patch_embedding_selector,
+            ).to(torch.float64)
+        else:
+            denoised = net(
+                x_hat_batch,
+                x_lr,
+                t_hat,
+                class_labels,
+                embedding_selector=patch_embedding_selector,
+            ).to(torch.float64)
+        if patching:
+            # Un-patch the denoised image
+            # (batch_size, C_out, img_shape_y, img_shape_x)
+            denoised = patching.fuse(input=denoised, batch_size=batch_size)
+
+        d_cur = (x_hat - denoised) / t_hat
+        x_next = x_hat + (t_next - t_hat) * d_cur
+
+        # Apply 2nd order correction.
+        if i < num_steps - 1:
+            # Patched input
+            # (batch_size * patch_num, C_out, patch_shape_y, patch_shape_x)
+            x_next_batch = (patching.apply(input=x_next) if patching else x_next).to(
+                latents.device
+            )
+
+            if lead_time_label is not None:
+                denoised = net(
+                    x_next_batch,
+                    x_lr,
+                    t_next,
+                    class_labels,
+                    lead_time_label=lead_time_label,
+                    embedding_selector=patch_embedding_selector,
+                ).to(torch.float64)
+            else:
+                denoised = net(
+                    x_next_batch,
+                    x_lr,
+                    t_next,
+                    class_labels,
+                    embedding_selector=patch_embedding_selector,
+                ).to(torch.float64)
+            if patching:
+                # Un-patch the denoised image
+                # (batch_size, C_out, img_shape_y, img_shape_x)
+                denoised = patching.fuse(input=denoised, batch_size=batch_size)
+
+            d_prime = (x_next - denoised) / t_next
+            x_next = x_hat + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)
+    return x_next
+
+
+
+def diffusion_step(
+    net: torch.nn.Module,
+    sampler_fn: callable,
+    img_shape: tuple,
+    img_out_channels: int,
+    rank_batches: list,
+    img_lr: torch.Tensor,
+    rank: int,
+    device: torch.device,
+    mean_hr: torch.Tensor = None,
+    lead_time_label: torch.Tensor = None,
+) -> torch.Tensor:
+
+    """
+    Generate images using diffusion techniques as described in the relevant paper.
+
+    This function applies a diffusion model to generate high-resolution images based on
+    low-resolution inputs. It supports optional conditioning on high-resolution mean
+    predictions and lead time labels.
+
+    For each low-resolution sample in `img_lr`, the function generates multiple
+    high-resolution samples, with different random seeds, specified in `rank_batches`.
+    The function then concatenates these high-resolution samples across the batch dimension.
+
+    Parameters
+    ----------
+    net : torch.nn.Module
+        The diffusion model network.
+    sampler_fn : callable
+        Function used to sample images from the diffusion model.
+    img_shape : tuple
+        Shape of the images, (height, width).
+    img_out_channels : int
+        Number of output channels for the image.
+    rank_batches : list
+        List of batches of seeds to process.
+    img_lr : torch.Tensor
+        Low-resolution input image with shape (seed_batch_size, channels_lr, height, width).
+    rank : int, optional
+        Rank of the current process for distributed processing.
+    device : torch.device, optional
+        Device to perform computations.
+    mean_hr : torch.Tensor, optional
+        High-resolution mean tensor to be used as an additional input,
+        with shape (1, channels_hr, height, width). Default is None.
+    lead_time_label : torch.Tensor, optional
+        Lead time label tensor for temporal conditioning,
+        with shape (batch_size, lead_time_dims). Default is None.
+
+    Returns
+    -------
+    torch.Tensor
+        Generated images concatenated across batches with shape
+        (seed_batch_size * len(rank_batches), out_channels, height, width).
+    """
+
+    # Check img_lr dimensions match expected shape
+    if img_lr.shape[2:] != img_shape:
+        raise ValueError(
+            f"img_lr shape {img_lr.shape[2:]} does not match expected shape img_shape {img_shape}"
+        )
+
+    # Check mean_hr dimensions if provided
+    if mean_hr is not None:
+        if mean_hr.shape[2:] != img_shape:
+            raise ValueError(
+                f"mean_hr shape {mean_hr.shape[2:]} does not match expected shape img_shape {img_shape}"
+            )
+        if mean_hr.shape[0] != 1:
+            raise ValueError(f"mean_hr must have batch size 1, got {mean_hr.shape[0]}")
+
+    img_lr = img_lr.to(memory_format=torch.channels_last)
+
+    # Handling of the high-res mean
+    additional_args = {}
+    if mean_hr is not None:
+        additional_args["mean_hr"] = mean_hr
+    if lead_time_label is not None:
+        additional_args["lead_time_label"] = lead_time_label
+
+    # Loop over batches
+    all_images = []
+    for batch_seeds in tqdm.tqdm(rank_batches, unit="batch", disable=(rank != 0)):
+        with nvtx.annotate(f"generate {len(all_images)}", color="rapids"):
+            batch_size = len(batch_seeds)
+            if batch_size == 0:
+                continue
+
+            # Initialize random generator, and generate latents
+            rnd = StackedRandomGenerator(device, batch_seeds)
+            latents = rnd.randn(
+                [
+                    img_lr.shape[0],
+                    img_out_channels,
+                    img_shape[0],
+                    img_shape[1],
+                ],
+                device=device,
+            ).to(memory_format=torch.channels_last)
+
+            with torch.inference_mode():
+                images = sampler_fn(
+                    net, latents, img_lr, randn_like=rnd.randn_like, **additional_args
+                )
+            all_images.append(images)
+    return torch.cat(all_images)
+
+
+def fractional_plot_bundle(fraction):
+    """
+    Get the tueplots bundle, but with figure width as a fraction of
+    the page width.
+    """
+    bundle = bundles.neurips2023(usetex=False, family="serif")
+    bundle.update(figsizes.neurips2023())
+    original_figsize = bundle["figure.figsize"]
+    bundle["figure.figsize"] = (
+        original_figsize[0] / fraction,
+        original_figsize[1],
+    )
+    return bundle
 
 
 def load_dataset_stats(dataset_name, device="cpu"):
@@ -37,378 +421,3 @@ def load_dataset_stats(dataset_name, device="cpu"):
         "data_mean": data_mean,
         "data_std": data_std,
     }
-
-
-def load_static_data(dataset_name, device="cpu"):
-    """
-    Load static files related to dataset
-    """
-    static_dir_path = os.path.join(dataset_name, "static")
-
-    def loads_file(fn):
-        return torch.load(
-            os.path.join(static_dir_path, fn), map_location=device
-        )
-
-    grid_static_features = loads_file(
-        "grid_features.pt"
-    )  # (N_grid, d_grid_static)
-
-    # Load parameter std for computing validation errors in original data scale
-    data_mean = loads_file("parameter_mean.pt")  # (d_features,)
-    data_std = loads_file("parameter_std.pt")  # (d_features,)
-
-    return {
-        "grid_static_features": grid_static_features,
-        "data_mean": data_mean,
-        "data_std": data_std,
-    }
-
-
-class BufferList(nn.Module):
-    """
-    A list of torch buffer tensors that sit together as a Module with no
-    parameters and only buffers.
-
-    This should be replaced by a native torch BufferList once implemented.
-    See: https://github.com/pytorch/pytorch/issues/37386
-    """
-
-    def __init__(self, buffer_tensors, persistent=True):
-        super().__init__()
-        self.n_buffers = len(buffer_tensors)
-        for buffer_i, tensor in enumerate(buffer_tensors):
-            self.register_buffer(f"b{buffer_i}", tensor, persistent=persistent)
-
-    def __getitem__(self, key):
-        return getattr(self, f"b{key}")
-
-    def __len__(self):
-        return self.n_buffers
-
-    def __iter__(self):
-        return (self[i] for i in range(len(self)))
-
-
-def load_graph(graph_name, device="cpu"):
-    """
-    Load all tensors representing the graph
-    """
-    # Define helper lambda function
-    graph_dir_path = os.path.join("graphs", graph_name)
-
-    def loads_file(fn):
-        return torch.load(os.path.join(graph_dir_path, fn), map_location=device)
-
-    # Load edges (edge_index)
-    m2m_edge_index = BufferList(
-        loads_file("m2m_edge_index.pt"), persistent=False
-    )  # List of (2, M_m2m[l])
-    g2m_edge_index = loads_file("g2m_edge_index.pt")  # (2, M_g2m)
-    m2g_edge_index = loads_file("m2g_edge_index.pt")  # (2, M_m2g)
-
-    n_levels = len(m2m_edge_index)
-    hierarchical = n_levels > 1  # Nor just single level mesh graph
-
-    # Load static edge features
-    m2m_features = loads_file("m2m_features.pt")  # List of (M_m2m[l], d_edge_f)
-    g2m_features = loads_file("g2m_features.pt")  # (M_g2m, d_edge_f)
-    m2g_features = loads_file("m2g_features.pt")  # (M_m2g, d_edge_f)
-
-    # Normalize by dividing with longest edge (found in m2m)
-    longest_edge = max(
-        torch.max(level_features[:, 0]) for level_features in m2m_features
-    )  # Col. 0 is length
-    m2m_features = BufferList(
-        [level_features / longest_edge for level_features in m2m_features],
-        persistent=False,
-    )
-    g2m_features = g2m_features / longest_edge
-    m2g_features = m2g_features / longest_edge
-
-    # Load static node features
-    mesh_static_features = loads_file(
-        "mesh_features.pt"
-    )  # List of (N_mesh[l], d_mesh_static)
-
-    # Some checks for consistency
-    assert (
-        len(m2m_features) == n_levels
-    ), "Inconsistent number of levels in mesh"
-    assert (
-        len(mesh_static_features) == n_levels
-    ), "Inconsistent number of levels in mesh"
-
-    if hierarchical:
-        # Load up and down edges and features
-        mesh_up_edge_index = BufferList(
-            loads_file("mesh_up_edge_index.pt"), persistent=False
-        )  # List of (2, M_up[l])
-        mesh_down_edge_index = BufferList(
-            loads_file("mesh_down_edge_index.pt"), persistent=False
-        )  # List of (2, M_down[l])
-
-        mesh_up_features = loads_file(
-            "mesh_up_features.pt"
-        )  # List of (M_up[l], d_edge_f)
-        mesh_down_features = loads_file(
-            "mesh_down_features.pt"
-        )  # List of (M_down[l], d_edge_f)
-
-        # Rescale
-        mesh_up_features = BufferList(
-            [
-                edge_features / longest_edge
-                for edge_features in mesh_up_features
-            ],
-            persistent=False,
-        )
-        mesh_down_features = BufferList(
-            [
-                edge_features / longest_edge
-                for edge_features in mesh_down_features
-            ],
-            persistent=False,
-        )
-
-        mesh_static_features = BufferList(
-            mesh_static_features, persistent=False
-        )
-    else:
-        # Extract single mesh level
-        m2m_edge_index = m2m_edge_index[0]
-        m2m_features = m2m_features[0]
-        mesh_static_features = mesh_static_features[0]
-
-        (
-            mesh_up_edge_index,
-            mesh_down_edge_index,
-            mesh_up_features,
-            mesh_down_features,
-        ) = ([], [], [], [])
-
-    return hierarchical, {
-        "g2m_edge_index": g2m_edge_index,
-        "m2g_edge_index": m2g_edge_index,
-        "m2m_edge_index": m2m_edge_index,
-        "mesh_up_edge_index": mesh_up_edge_index,
-        "mesh_down_edge_index": mesh_down_edge_index,
-        "g2m_features": g2m_features,
-        "m2g_features": m2g_features,
-        "m2m_features": m2m_features,
-        "mesh_up_features": mesh_up_features,
-        "mesh_down_features": mesh_down_features,
-        "mesh_features": mesh_static_features,
-    }
-
-
-def make_mlp(blueprint, layer_norm=True):
-    """
-    Create MLP from list blueprint, with
-    input dimensionality: blueprint[0]
-    output dimensionality: blueprint[-1] and
-    hidden layers of dimensions: blueprint[1], ..., blueprint[-2]
-
-    if layer_norm is True, includes a LayerNorm layer at
-    the output (as used in GraphCast)
-    """
-    hidden_layers = len(blueprint) - 2
-    assert hidden_layers >= 0, "Invalid MLP blueprint"
-
-    layers = []
-    for layer_i, (dim1, dim2) in enumerate(zip(blueprint[:-1], blueprint[1:])):
-        layers.append(nn.Linear(dim1, dim2))
-        if layer_i != hidden_layers:
-            layers.append(nn.SiLU())  # Swish activation
-
-    # Optionally add layer norm to output
-    if layer_norm:
-        layers.append(nn.LayerNorm(blueprint[-1]))
-
-    return nn.Sequential(*layers)
-
-
-def fractional_plot_bundle(fraction):
-    """
-    Get the tueplots bundle, but with figure width as a fraction of
-    the page width.
-    """
-    bundle = bundles.neurips2023(usetex=False, family="serif")
-    bundle.update(figsizes.neurips2023())
-    original_figsize = bundle["figure.figsize"]
-    bundle["figure.figsize"] = (
-        original_figsize[0] / fraction,
-        original_figsize[1],
-    )
-    return bundle
-
-
-def init_wandb_metrics(wandb_logger):
-    """
-    Set up wandb metrics to track
-    """
-    experiment = wandb_logger.experiment
-    experiment.define_metric("val_mean_loss", summary="min")
-    for step in constants.VAL_STEP_LOG_ERRORS:
-        experiment.define_metric(f"val_loss_unroll{step}", summary="min")
-
-
-class IdentityModule(nn.Module):
-    """
-    A identity operator that can return multiple inputs
-    """
-
-    def forward(self, *args):
-        """Return input args"""
-        return args
-
-
-def make_gnn_seq(edge_index, num_gnn_layers, hidden_layers, hidden_dim):
-    """
-    Make a sequential GNN module propagating both node and edge representations
-    """
-    if num_gnn_layers == 0:
-        # If no layers, return identity
-        return IdentityModule()
-    return pyg.nn.Sequential(
-        "mesh_rep, edge_rep",
-        [
-            (
-                InteractionNet(
-                    edge_index,
-                    hidden_dim,
-                    hidden_layers=hidden_layers,
-                ),
-                "mesh_rep, mesh_rep, edge_rep -> mesh_rep, edge_rep",
-            )
-            for _ in range(num_gnn_layers)
-        ],
-    )
-
-
-def get_2d_sincos_pos_embed(embed_dim, grid_size, cls_token=False):
-    """
-    grid_size: int of the grid height and width
-    return:
-    pos_embed: [grid_size*grid_size, embed_dim] or [1+grid_size*grid_size, embed_dim] (w/ or w/o cls_token)
-    """
-    grid_h = np.arange(grid_size, dtype=np.float32)
-    grid_w = np.arange(grid_size, dtype=np.float32)
-    grid = np.meshgrid(grid_w, grid_h)  # here w goes first
-    grid = np.stack(grid, axis=0)
-
-    grid = grid.reshape([2, 1, grid_size, grid_size])
-    pos_embed = get_2d_sincos_pos_embed_from_grid(embed_dim, grid)
-    if cls_token:
-        pos_embed = np.concatenate([np.zeros([1, embed_dim]), pos_embed], axis=0)
-    return pos_embed
-
-
-def get_2d_sincos_pos_embed_from_grid(embed_dim, grid):
-    assert embed_dim % 2 == 0
-
-    # use half of dimensions to encode grid_h
-    emb_h = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[0])  # (H*W, D/2)
-    emb_w = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[1])  # (H*W, D/2)
-
-    emb = np.concatenate([emb_h, emb_w], axis=1) # (H*W, D)
-    return emb
-
-
-def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
-    """
-    embed_dim: output dimension for each position
-    pos: a list of positions to be encoded: size (M,)
-    out: (M, D)
-    """
-    assert embed_dim % 2 == 0
-    omega = np.arange(embed_dim // 2, dtype=float)
-    omega /= embed_dim / 2.
-    omega = 1. / 10000**omega  # (D/2,)
-
-    pos = pos.reshape(-1)  # (M,)
-    out = np.einsum('m,d->md', pos, omega)  # (M, D/2), outer product
-
-    emb_sin = np.sin(out) # (M, D/2)
-    emb_cos = np.cos(out) # (M, D/2)
-
-    emb = np.concatenate([emb_sin, emb_cos], axis=1)  # (M, D)
-    return emb
-
-
-    
-def plot_binary_mask(binary_mask_tensor, title="Binary Mask Visualization"):
-    """
-    Plot the binary mask tensor to visualize the masked areas.
-
-    Parameters:
-    binary_mask_tensor (torch.Tensor): Tensor of shape (x, y) with masking information.
-    title (str): Title for the plot.
-    """
-    # Convert the binary mask tensor to a NumPy array for visualization
-    mask_slice = binary_mask_tensor.cpu().numpy()
-
-    # Plot the binary mask
-    plt.figure(figsize=(8, 8))
-    plt.imshow(mask_slice, cmap='gray', origin='upper', interpolation='nearest')
-    plt.colorbar(label="Mask Value (1: Not Masked, 0: Masked)")
-    plt.title(title)
-    plt.xlabel("Grid X")
-    plt.ylabel("Grid Y")
-    plt.show()
-    plt.savefig("mask_visualization.png")
-    
-    
-def compute_MSE_entiregrid(prediction, targets):
-    """
-    Compute the Mean Squared Error (MSE) for the entire grid.
-
-    Parameters:
-    preds (torch.Tensor): Tensor of shape (batch_size, grid_size, grid_size) with the predicted values.
-    targets (torch.Tensor): Tensor of shape (batch_size, grid_size, grid_size) with the target values.
-    mask (torch.Tensor): Tensor of shape (grid_size, grid_size) with the binary mask.
-
-    Returns:
-    mse (float): Mean Squared Error (MSE) for the entire grid.
-    """
-    squared_error = (prediction - targets) ** 2
-    mse_batches = squared_error.mean(dim=1)
-    #mse_per_var = mse_batches.mean(dim=0)
-    
-    return mse_batches.mean(), mse_batches.mean(dim=0)
-
-def compute_MSE_masked(prediction, targets, mask):
-
-    mask = mask.unsqueeze(-1)
-    mask = mask.repeat(1, 1, 5)
-    squared_error = ((prediction - targets) ** 2) * mask 
-    mse_batches = squared_error.sum(dim=1) / mask.sum(dim=1)
-    #mse_per_var = mse_batches.mean(dim=0)
-    return mse_batches.mean(), mse_batches.mean(dim=0)
-
-def compute_MAE_entiregrid(prediction, targets):
-    """
-    Compute the Mean Absolute Error (MAE) for the entire grid.
-
-    Parameters:
-    preds (torch.Tensor): Tensor of shape (batch_size, grid_size, grid_size) with the predicted values.
-    targets (torch.Tensor): Tensor of shape (batch_size, grid_size, grid_size) with the target values.
-    mask (torch.Tensor): Tensor of shape (grid_size, grid_size) with the binary mask.
-
-    Returns:
-    mae (float): Mean Absolute Error (MAE) for the entire grid.
-    """
-    absolute_error = torch.abs(prediction - targets)
-    mae_batches = absolute_error.mean(dim=1)
-    #mae_per_var = mae_batches.mean(dim=0)
-    
-    return mae_batches.mean(), mae_batches.mean(dim=0)
-
-
-def compute_MAE_masked(prediction, targets, mask):
-    mask = mask.unsqueeze(-1)
-    mask = mask.repeat(1, 1, 5)
-    absolute_error = torch.abs(prediction - targets) * mask
-    mae_batches = absolute_error.sum(dim=1) / mask.sum(dim=1)
-    #mae_per_var = mae_batches.mean(dim=0)
-    return mae_batches.mean(), mae_batches.mean(dim=0)

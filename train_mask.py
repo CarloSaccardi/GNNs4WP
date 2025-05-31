@@ -10,10 +10,8 @@ from lightning_fabric.utilities import seed
 
 # First-party
 from neural_lam import constants, utils
-from neural_lam.models.mask_efm import GraphEFM
 from neural_lam.models.unet import UNetWrapper
 from neural_lam.models.diffusion import DiffusionWrapper
-from neural_lam.models.graphcast import GraphCast
 from neural_lam.weather_dataset import ERA5toCERRA2
 import os
 import yaml
@@ -21,8 +19,6 @@ import yaml
 #os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 MODELS = {
-    "graphcast": GraphCast,
-    "graph_efm": GraphEFM,
     "UNet-CNN": UNetWrapper,
     "Diffusion": DiffusionWrapper
 }
@@ -233,6 +229,12 @@ def get_args():
         default=True,
         help="Condition on regression model prediction or not",
     )
+    parser.add_argument(
+        "--num_ensembles",
+        type=int,
+        default=32,
+        help="Number of ensembles to generate with diffusion",
+    )    
     return parser.parse_args()
 
 def main(args):
