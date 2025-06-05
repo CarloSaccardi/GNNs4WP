@@ -199,7 +199,9 @@ class ERA5toCERRA2(torch.utils.data.Dataset):
                     "mean_era5": mean_era5,
                     "std_era5": std_era5
                 }
-                return sample_CERRA, sample_era5, diz_stats
+                #return also the names of the samples
+                
+                return sample_CERRA, sample_era5, diz_stats, sample_name_CERRA
             
             else:
                 return sample_CERRA, sample_era5

@@ -7,6 +7,9 @@ from neural_lam import constants
 from neural_lam import vis
 from typing import Callable, Optional, Tuple
 import random
+from torchmetrics.functional import structural_similarity_index_measure as ssim_func
+import os
+import numpy as np
 
 network_module = importlib.import_module("physicsnemo.models.diffusion")
 
@@ -28,6 +31,8 @@ class UNetWrapper(pl.LightningModule):
         self.img_out_channels = args.img_out_channels
         self.lr = args.lr
         self.wandb_project = args.wandb_project
+        self.savepreds_path = args.savepreds_path
+        self.load = args.load
         
         self.model_kwargs = {
             'checkpoint_level': args.checkpoint_level,
@@ -154,55 +159,89 @@ class UNetWrapper(pl.LightningModule):
     
     def test_step(self, batch, batch_idx: int) -> dict:
         """
-        Evaluate model on a test batch and store metrics.
-        Computes overall MSE, MAE, RMSE, and SSIM as well as per-variable metrics.
+        Evaluate model on a test batch, save un‐normalized predictions if requested,
+        and compute metrics on the un‐normalized data.
         """
-        batch_size = batch[0].shape[0]
-        img_clean, img_lr, diz_stats = batch
+        # Unpack batch
+        # img_clean: (B, C, H, W)
+        # img_lr:    (B, C, H, W)
+        # diz_stats: dict with keys "mean_CERRA", "std_CERRA", "mean_era5", "std_era5"
+        # img_lr_name: tuple of length B, each entry is a string (base name for saving)
+        img_clean, img_lr, diz_stats, img_lr_name = batch
+
+        batch_size = img_clean.shape[0]
         img_clean = img_clean.float()
-        img_lr = img_lr.float()
-        
-        # Get loss, ground truth, and predictions from the loss function.
-        # Note: ground_truth and predictions are assumed to be in (B, C, H, W)
+        img_lr    = img_lr.float()
+
+        # (1) Get raw predictions & ground_truth from your loss_fn
+        #     They are assumed to be in normalized space: shape (B, C, H, W)
         _, ground_truth, predictions = self.loss_fn(
             net=self,
             img_clean=img_clean,
             img_lr=img_lr
         )
-        
-        # Overall metrics across all variables.
-        mse_all = torch.mean((predictions - ground_truth) ** 2)
-        mae_all = torch.mean(torch.abs(predictions - ground_truth))
+
+        # (2) Un‐normalize both `predictions` and `ground_truth` at once,
+        #     so that all metrics and saved files are on the original scale.
+        high_res_mean = diz_stats["mean_CERRA"]
+        high_res_std  = diz_stats["std_CERRA"]
+        # Assuming `ground_truth` was normalized the same way as `prediction`:
+        predictions  = predictions * high_res_std + high_res_mean
+        ground_truth = ground_truth * high_res_std + high_res_mean
+
+        # (3) If requested, save each sample’s un‐normalized prediction as a .npy file.
+        #     We'll save into a folder called "predictions" (create if needed),
+        #     and name each file using img_lr_name[i] + ".npy".
+        if self.savepreds_path:
+            
+            savepath = self.savepreds_path + "/" + self.load.split("/")[-2] 
+            
+            os.makedirs(savepath, exist_ok=True)
+            # predictions: Tensor of shape (B, C, H, W) after un‐normalization
+            preds_cpu = predictions.detach().cpu().numpy()
+            for i in range(batch_size):
+                base_name = img_lr_name[i]
+                out_path = os.path.join(savepath, f"nwp_{base_name}")
+                # Save the multi‐channel array as-is
+                # (so downstream you can load with np.load and get shape (C, H, W)).
+                np.save(out_path, preds_cpu[i])
+                # Alternatively, if you prefer numpy.save:
+                # np.save(out_path, preds_cpu[i])
+
+        # (4) Compute all global metrics on the un‐normalized tensors:
+        mse_all  = torch.mean((predictions - ground_truth) ** 2)
+        mae_all  = torch.mean(torch.abs(predictions - ground_truth))
         rmse_all = torch.sqrt(mse_all)
-        
-        from torchmetrics.functional import structural_similarity_index_measure as ssim_func
-        overall_data_range = (ground_truth.max() - ground_truth.min()).item()
-        ssim_all = ssim_func(predictions, ground_truth, data_range=overall_data_range)
-        
-        # Define variable names in order.
+
+        # For SSIM, we need the data_range. Since we already un‐normalized:
+        data_range = (ground_truth.max() - ground_truth.min()).item()
+        ssim_all  = ssim_func(predictions, ground_truth, data_range=data_range)
+
+        # (5) Compute per‐variable metrics. Here var_names must match the channel order.
         var_names = ['u10', 'v10', 't2m', 'sshf', 'zust']
-        
-        mse_vars = {}
-        mae_vars = {}
+        mse_vars  = {}
+        mae_vars  = {}
         rmse_vars = {}
         ssim_vars = {}
+
         for i, var_name in enumerate(var_names):
-            # Extract the i-th variable (shape: (B, H, W)).
-            pred_i = predictions[:, i, :, :]
-            gt_i = ground_truth[:, i, :, :]
-            
-            mse_val = torch.mean((pred_i - gt_i) ** 2)
+            pred_i = predictions[:, i, :, :]  # shape (B, H, W)
+            gt_i   = ground_truth[:, i, :, :]
+
+            mse_val        = torch.mean((pred_i - gt_i) ** 2)
             mse_vars[f"test_mse_{var_name}"] = mse_val
             mae_vars[f"test_mae_{var_name}"] = torch.mean(torch.abs(pred_i - gt_i))
             rmse_vars[f"test_rmse_{var_name}"] = torch.sqrt(mse_val)
-            
-            # SSIM expects the input to be (B, C, H, W); for a single channel, unsqueeze.
+
+            # SSIM for single‐channel: add a dummy channel dim
             data_range_i = (gt_i.max() - gt_i.min()).item()
-            ssim_vars[f"test_ssim_{var_name}"] = ssim_func(pred_i.unsqueeze(1),
-                                                            gt_i.unsqueeze(1),
-                                                            data_range=data_range_i)
-        
-        # Combine all metrics.
+            ssim_vars[f"test_ssim_{var_name}"] = ssim_func(
+                pred_i.unsqueeze(1),
+                gt_i.unsqueeze(1),
+                data_range=data_range_i
+            )
+
+        # (6) Log everything
         log_metrics = {
             "test_mse": mse_all,
             "test_mae": mae_all,
@@ -213,11 +252,14 @@ class UNetWrapper(pl.LightningModule):
         log_metrics.update(mae_vars)
         log_metrics.update(rmse_vars)
         log_metrics.update(ssim_vars)
-        
+
+        # Write to Lightning’s logger (and optionally sync across GPUs)
         self.log_dict(log_metrics, prog_bar=False, on_epoch=True, sync_dist=True)
-        
-        self.test_metrics_and_plots(predictions, ground_truth, img_lr, diz_stats)
-        
+
+        # (7) Pass un‐normalized predictions & high_res into the plotting function.
+        #     Note: plot_preds now assumes its inputs are already un‐normalized.
+        self.plot_preds(predictions, ground_truth, img_lr, diz_stats)
+
         return log_metrics
     
     
@@ -274,66 +316,60 @@ class UNetWrapper(pl.LightningModule):
         plt.close("all")   
         
         
-        
-    def test_metrics_and_plots(self, prediction, high_res, img_lr, diz_stats):
+    def plot_preds(self, prediction, high_res, img_lr, diz_stats):
         """
-        Plot a random sample for a random variable from the batch. The figure includes 
-        the low resolution input, target (high_res), prediction, and residual.
-        The overall figure title indicates the variable name, and the plot is saved.
+        Plot one random sample from the batch (single variable):
+        [low‐res input, high‐res target, prediction, residual].
+        Here, `prediction` and `high_res` are already un‐normalized. We only
+        need to un‐normalize `img_lr` for plotting.
         """
-        import os
-        import matplotlib.pyplot as plt
-        
-        high_res_mean = diz_stats["mean_CERRA"]
-        high_res_std = diz_stats["std_CERRA"]
+        # If you need statistics to un‐normalize img_lr for plotting:
         low_res_mean = diz_stats["mean_era5"]
-        low_res_std = diz_stats["std_era5"]
-        
-        prediction = prediction * high_res_std + high_res_mean
-        high_res = high_res * high_res_std + high_res_mean
+        low_res_std  = diz_stats["std_era5"]
+
+        # Un‐normalize img_lr before plotting
         img_lr = img_lr * low_res_std + low_res_mean
 
-        # Select a random sample from the batch and a random variable index.
-        sample = random.randint(0, prediction.shape[0] - 1)
-        var_i = random.randint(0, prediction.shape[1] - 1)
-        
-        # Retrieve variable name and unit from constants.
+        # Select a random sample index and a random variable/channel index
+        sample_idx = random.randint(0, prediction.shape[0] - 1)
+        var_i      = random.randint(0, prediction.shape[1] - 1)
+
+        # Variable names and units (must match your constants)
         var_name = constants.PARAM_NAMES_SHORT_CERRA[var_i]
         var_unit = constants.PARAM_UNITS_CERRA[var_i]
-        
-        # Extract the images for the selected variable and sample.
-        input_img = img_lr[sample, var_i, :, :].detach().cpu().numpy()
-        target_img = high_res[sample, var_i, :, :].detach().cpu().numpy()
-        pred_img   = prediction[sample, var_i, :, :].detach().cpu().numpy()
+
+        # Extract 2D images for plotting (B, C, H, W → (H, W))
+        input_img   = img_lr[sample_idx, var_i, :, :].detach().cpu().numpy()
+        target_img  = high_res[sample_idx, var_i, :, :].detach().cpu().numpy()
+        pred_img    = prediction[sample_idx, var_i, :, :].detach().cpu().numpy()
         residual_img = target_img - pred_img
-        
-        # Create a plot with four subplots.
+
+        # Build a 1×4 subplot (Input, Target, Prediction, Residual)
         fig, axes = plt.subplots(1, 4, figsize=(20, 5))
-        
-        axes[0].imshow(input_img, cmap='plasma', origin='lower')
+        axes[0].imshow(input_img,   cmap='plasma', origin='lower')
         axes[0].set_title("Input")
         axes[0].axis("off")
-        
-        axes[1].imshow(target_img, cmap='plasma', origin='lower')
+
+        axes[1].imshow(target_img,  cmap='plasma', origin='lower')
         axes[1].set_title("Target")
         axes[1].axis("off")
-        
-        axes[2].imshow(pred_img, cmap='plasma', origin='lower')
+
+        axes[2].imshow(pred_img,    cmap='plasma', origin='lower')
         axes[2].set_title("Prediction")
         axes[2].axis("off")
-        
+
         axes[3].imshow(residual_img, cmap='plasma', origin='lower')
         axes[3].set_title("Residual")
         axes[3].axis("off")
-        
-        # Set overall title with variable name and unit.
+
+        # Overall title shows variable name and unit
         fig.suptitle(f"{var_name} ({var_unit})", fontsize=16)
-        
-        # Save plot to a given folder.
+
+        # Save the figure (e.g. into "plot_tests/")
         save_dir = "plot_tests"
         os.makedirs(save_dir, exist_ok=True)
-        filename = os.path.join(save_dir, f"{var_name}_sample_{sample}.png")
-        fig.savefig(filename, bbox_inches='tight')
+        fname = os.path.join(save_dir, f"{var_name}_sample_{sample_idx}.png")
+        fig.savefig(fname, bbox_inches='tight')
         plt.close(fig)
     
     

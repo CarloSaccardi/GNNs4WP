@@ -235,6 +235,12 @@ def get_args():
         default=32,
         help="Number of ensembles to generate with diffusion",
     )    
+    parser.add_argument(
+        "--savepreds_path",
+        type=str,
+        default=None,
+        help="Path to save predictions to",
+    )
     return parser.parse_args()
 
 def main(args):
