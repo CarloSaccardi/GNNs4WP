@@ -10,6 +10,8 @@ import random
 from torchmetrics.functional import structural_similarity_index_measure as ssim_func
 import os
 import numpy as np
+from scipy.fft import fft
+import math
 
 network_module = importlib.import_module("physicsnemo.models.diffusion")
 
@@ -51,7 +53,7 @@ class UNetWrapper(pl.LightningModule):
             **self.model_kwargs,
         )
 
-        self.loss_fn = RegressionLoss()
+        self.loss_fn = RegressionLoss(args.lambda_psd)
 
     def forward(
         self,
@@ -110,12 +112,11 @@ class UNetWrapper(pl.LightningModule):
         img_clean, img_lr, *rest = batch
         img_clean = img_clean.float()
         img_lr = img_lr.float()
-        loss_map, _, _ = self.loss_fn(
+        loss, _, _ = self.loss_fn(
                             net=self,
                             img_clean=img_clean,
                             img_lr=img_lr
                         )
-        loss = loss_map.sum() / batch_size
         
         log_dict = {
             "train_loss": loss,
@@ -130,12 +131,11 @@ class UNetWrapper(pl.LightningModule):
         img_clean, img_lr = batch
         img_clean = img_clean.float()
         img_lr = img_lr.float()
-        val_map, ground_truth, predictions = self.loss_fn(
+        val_loss, ground_truth, predictions = self.loss_fn(
                                                 net=self,
                                                 img_clean=img_clean,
                                                 img_lr=img_lr
                                             )
-        val_loss = val_map.sum() / batch_size
         
         # Log loss per time step forward and mean
         val_log_dict = {
@@ -391,12 +391,29 @@ class RegressionLoss:
     arXiv preprint arXiv:2309.15214.
     """
 
-    def __init__(self):
+    def __init__(self, lambda_psd: float, eps: float = 1e-12):
+        self.lambda_psd = lambda_psd
+        self.eps = eps                         # to avoid log(0)
+    
+    @staticmethod
+    def get_psd_torch(a: torch.Tensor, *, dx: float, dim: int = -1
+                      ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Arguments
+        Parameters
         ----------
+        a   : (..., N)   real-valued signal
+        dx  : grid spacing (same units as the data’s physical dimension)
+        dim : dimension over which to take the FFT
         """
-        return
+        N  = a.shape[dim]
+        dk = 2 * math.pi / dx                      # angular‐wavenumber step
+        k  = torch.arange(0, N // 2, device=a.device, dtype=a.dtype) * dk / N
+
+        v_ft  = torch.fft.rfft(a, dim=dim)         # shape (..., N//2+1)
+        v_ft  = v_ft.narrow(dim, 0, N // 2)        # drop Nyquist to match k
+        psd   = (v_ft.real.square() + v_ft.imag.square()) / (N * dx)
+
+        return k, psd  
 
     def __call__(
         self,
@@ -453,9 +470,6 @@ class RegressionLoss:
             `augment_pipe`).
             Shape: (B, C_hr, H, W), same as `img_clean`.
         """
-        weight = (
-            1.0  # (sigma ** 2 + self.sigma_data ** 2) / (sigma * self.sigma_data) ** 2
-        )
 
         img_tot = torch.cat((img_clean, img_lr), dim=1)
         y_tot, augment_labels = (
@@ -466,7 +480,22 @@ class RegressionLoss:
 
         zero_input = torch.zeros_like(y, device=img_clean.device)
         D_yn = net(zero_input, y_lr, force_fp32=False, augment_labels=augment_labels)
-        loss = weight * ((D_yn - y) ** 2)
+        loss = torch.mean((D_yn - y) ** 2)
+        
+        # ─── PSD loss ────────────────────────────────────────────────
+        _, psd_pred = self.get_psd_torch(
+            D_yn.permute(0, 2, 3, 1), dx=5.5, dim=2)
+        _, psd_true = self.get_psd_torch(
+            y.permute(0, 2, 3, 1),   dx=5.5, dim=2)
+
+        # RMSE between log-PSDs (scalar)
+        psd_loss = torch.sqrt(
+            torch.mean(
+                (torch.log(psd_pred + self.eps) - torch.log(psd_true + self.eps)) ** 2
+            )
+        )
+        
+        loss += self.lambda_psd * psd_loss
 
         return loss, y, D_yn
     

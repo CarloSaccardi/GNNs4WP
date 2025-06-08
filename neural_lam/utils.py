@@ -25,8 +25,18 @@ from typing import Callable, Optional
 
 import torch
 from torch import Tensor
-
+from neural_lam import constants
 from physicsnemo.utils.patching import GridPatching2D
+
+
+def init_wandb_metrics(wandb_logger):
+    """
+    Set up wandb metrics to track
+    """
+    experiment = wandb_logger.experiment
+    experiment.define_metric("val_mean_loss", summary="min")
+    for step in constants.VAL_STEP_LOG_ERRORS:
+        experiment.define_metric(f"val_loss_unroll{step}", summary="min")
 
 
 def stochastic_sampler(
@@ -421,3 +431,6 @@ def load_dataset_stats(dataset_name, device="cpu"):
         "data_mean": data_mean,
         "data_std": data_std,
     }
+    
+    
+    

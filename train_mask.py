@@ -241,6 +241,12 @@ def get_args():
         default=None,
         help="Path to save predictions to",
     )
+    parser.add_argument(
+        "--lambda_psd",
+        type=float,
+        default=0.1,
+        help="Weight for the PSD loss term (default: 0.0)",
+    )
     return parser.parse_args()
 
 def main(args):
