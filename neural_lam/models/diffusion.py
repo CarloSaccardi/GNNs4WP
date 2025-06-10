@@ -92,6 +92,7 @@ class DiffusionWrapper(pl.LightningModule):
         self.sigma_data: float = 0.5
         self.sigma_min=0.0
         self.sigma_max=float("inf")
+        self.savepreds_path = args.savepreds_path
         
         self.lr = args.lr
         
