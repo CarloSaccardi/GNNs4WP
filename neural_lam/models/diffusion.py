@@ -14,6 +14,13 @@ from functools import partial
 from neural_lam import constants
 import random
 
+import matplotlib.pyplot as plt
+
+import os
+import numpy as np
+from torchmetrics.functional import structural_similarity_index_measure as ssim_func
+
+
 network_module = importlib.import_module("physicsnemo.models.diffusion")
 
 
@@ -279,7 +286,7 @@ class DiffusionWrapper(pl.LightningModule):
     
     def test_step(self, batch, *args):
         batch_size = batch[0].shape[0]
-        img_clean, img_lr, diz_stats = batch
+        img_clean, img_lr, diz_stats, img_lr_name = batch
         img_clean = img_clean.float()
         img_lr = img_lr.float()
         
@@ -314,22 +321,41 @@ class DiffusionWrapper(pl.LightningModule):
                         )
         
         y_res_avg = y_res.mean(dim=0, keepdim=True)
-        y_out =  y_res_avg + y_mean
+        predictions =  y_res_avg + y_mean
+        ground_truth = img_clean
         
-        # Get loss, ground truth, and predictions from the loss function.
-        # Note: ground_truth and predictions are assumed to be in (B, C, H, W)
-        _, ground_truth, predictions = self.loss_fn(
-            net=self,
-            img_clean=img_clean,
-            img_lr=img_lr
-        )
+        # (2) Un‐normalize both `predictions` and `ground_truth` at once,
+        #     so that all metrics and saved files are on the original scale.
+        high_res_mean = diz_stats["mean_CERRA"]
+        high_res_std  = diz_stats["std_CERRA"]
+        # Assuming `ground_truth` was normalized the same way as `prediction`:
+        predictions  = predictions * high_res_std + high_res_mean
+        ground_truth = ground_truth * high_res_std + high_res_mean
+
+        # (3) If requested, save each sample’s un‐normalized prediction as a .npy file.
+        #     We'll save into a folder called "predictions" (create if needed),
+        #     and name each file using img_lr_name[i] + ".npy".
+        if self.savepreds_path:
+            
+            savepath = self.savepreds_path + "/" + self.load.split("/")[-2] 
+            
+            os.makedirs(savepath, exist_ok=True)
+            # predictions: Tensor of shape (B, C, H, W) after un‐normalization
+            preds_cpu = predictions.detach().cpu().numpy()
+            for i in range(batch_size):
+                base_name = img_lr_name[i]
+                out_path = os.path.join(savepath, f"nwp_{base_name}")
+                # Save the multi‐channel array as-is
+                # (so downstream you can load with np.load and get shape (C, H, W)).
+                np.save(out_path, preds_cpu[i])
+                # Alternatively, if you prefer numpy.save:
+                # np.save(out_path, preds_cpu[i])
         
         # Overall metrics across all variables.
         mse_all = torch.mean((predictions - ground_truth) ** 2)
         mae_all = torch.mean(torch.abs(predictions - ground_truth))
         rmse_all = torch.sqrt(mse_all)
         
-        from torchmetrics.functional import structural_similarity_index_measure as ssim_func
         overall_data_range = (ground_truth.max() - ground_truth.min()).item()
         ssim_all = ssim_func(predictions, ground_truth, data_range=overall_data_range)
         
@@ -370,26 +396,22 @@ class DiffusionWrapper(pl.LightningModule):
         
         self.log_dict(log_metrics, prog_bar=False, on_epoch=True, sync_dist=True)
         
-        self.test_metrics_and_plots(predictions, ground_truth, img_lr, diz_stats)
+        self.plot_preds(predictions, ground_truth, img_lr, diz_stats)
         
         return log_metrics
     
-    def test_metrics_and_plots(self, prediction, high_res, img_lr, diz_stats):
+    def plot_preds(self, prediction, high_res, img_lr, diz_stats):
         """
         Plot a random sample for a random variable from the batch. The figure includes 
         the low resolution input, target (high_res), prediction, and residual.
         The overall figure title indicates the variable name, and the plot is saved.
         """
-        import os
-        import matplotlib.pyplot as plt
         
-        high_res_mean = diz_stats["mean_CERRA"]
-        high_res_std = diz_stats["std_CERRA"]
+        # If you need statistics to un‐normalize img_lr for plotting:
         low_res_mean = diz_stats["mean_era5"]
-        low_res_std = diz_stats["std_era5"]
-        
-        prediction = prediction * high_res_std + high_res_mean
-        high_res = high_res * high_res_std + high_res_mean
+        low_res_std  = diz_stats["std_era5"]
+
+        # Un‐normalize img_lr before plotting
         img_lr = img_lr * low_res_std + low_res_mean
 
         # Select a random sample from the batch and a random variable index.
