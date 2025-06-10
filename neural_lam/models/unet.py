@@ -194,7 +194,7 @@ class UNetWrapper(pl.LightningModule):
         #     and name each file using img_lr_name[i] + ".npy".
         if self.savepreds_path:
             
-            savepath = self.savepreds_path + "/" + self.load.split("/")[-2] 
+            savepath = self.savepreds_path + "/" + self.load.split("/")[-2] + "/files"
             
             os.makedirs(savepath, exist_ok=True)
             # predictions: Tensor of shape (B, C, H, W) after un‐normalization
@@ -366,7 +366,7 @@ class UNetWrapper(pl.LightningModule):
         fig.suptitle(f"{var_name} ({var_unit})", fontsize=16)
 
         # Save the figure (e.g. into "plot_tests/")
-        save_dir = "plot_tests"
+        save_dir = self.savepreds_path + "/" + self.load.split("/")[-2] + "/pred_plots"
         os.makedirs(save_dir, exist_ok=True)
         fname = os.path.join(save_dir, f"{var_name}_sample_{sample_idx}.png")
         fig.savefig(fname, bbox_inches='tight')
