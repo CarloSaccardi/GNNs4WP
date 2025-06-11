@@ -7,13 +7,17 @@ from typing import Union
 import wandb
 import matplotlib.pyplot as plt
 
-import torch.nn.functional as F
+import math
+from typing import Tuple, List, Dict, Union
 
 from neural_lam import constants, mask_utils, utils, vis
 from neural_lam.models.base_gnn_module import BaseGraphModule
 from neural_lam.models.hi_graph_latent_decoder import HiGraphLatentUnet
 
 import random
+
+import os
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +45,10 @@ class GraphUNet(BaseGraphModule):
         self.high_res_embedder = utils.make_mlp([self.grid_dim] + blueprint)
         self.g2m_embedder = utils.make_mlp([self.g2m_dim] + blueprint)
         self.m2g_embedder = utils.make_mlp([self.m2g_dim] + blueprint)
+        
+        self.savepreds_path = args.savepreds_path
+        self.load = args.load
+        self.lambda_psd = args.lambda_psd
 
         # Mesh structure embedding layers
         mesh_dims = [feat.shape[1] for feat in self.mesh_static_features]
@@ -144,6 +152,25 @@ class GraphUNet(BaseGraphModule):
             latent_dist, pred_mean, pred_std
         """
         return self.gnn_unet(high_res_emb, graph_emb)
+    
+    def get_psd_torch(self, a: torch.Tensor, *, dx: float, dim: int = -1
+                      ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Parameters
+        ----------
+        a   : (..., N)   real-valued signal
+        dx  : grid spacing (same units as the data’s physical dimension)
+        dim : dimension over which to take the FFT
+        """
+        N  = a.shape[dim]
+        dk = 2 * math.pi / dx                      # angular‐wavenumber step
+        k  = torch.arange(0, N // 2, device=a.device, dtype=a.dtype) * dk / N
+
+        v_ft  = torch.fft.rfft(a, dim=dim)         # shape (..., N//2+1)
+        v_ft  = v_ft.narrow(dim, 0, N // 2)        # drop Nyquist to match k
+        psd   = (v_ft.real.square() + v_ft.imag.square()) / (N * dx)
+
+        return k, psd
 
     def compute_loss(
         self,
@@ -154,11 +181,27 @@ class GraphUNet(BaseGraphModule):
         """
         Compute reconstruction MSE and KL divergence loss.
         """
-        batch_size = prediction.shape[0]
-        diff_squared = (prediction - target)**2
-        total_loss = diff_squared.sum() / batch_size
+        loss = torch.mean((prediction - target)**2)
+        
+        if self.lambda_psd > 0:
+        
+            # ─── PSD loss ────────────────────────────────────────────────
+            _, psd_pred = self.get_psd_torch(
+                prediction.permute(0, 2, 3, 1), dx=5.5, dim=2)
+            _, psd_true = self.get_psd_torch(
+                target.permute(0, 2, 3, 1),   dx=5.5, dim=2)
+
+            # RMSE between log-PSDs (scalar)
+            psd_loss = torch.sqrt(
+                torch.mean(
+                    (torch.log(psd_pred + self.eps) - torch.log(psd_true + self.eps)) ** 2
+                )
+            )
             
-        return total_loss
+            loss += self.lambda_psd * psd_loss
+
+            
+        return loss
 
     def training_step(self, batch, batch_idx: int) -> torch.Tensor:
         """
@@ -224,7 +267,7 @@ class GraphUNet(BaseGraphModule):
         Computes overall MSE, MAE, RMSE, and SSIM as well as per-variable metrics.
         """
         batch_size = batch[0].shape[0]
-        ground_truth, low_res, diz_stats = batch
+        ground_truth, low_res, diz_stats, img_lr_name = batch
         ground_truth = ground_truth.float()
         low_res = low_res.float()
         
@@ -248,6 +291,31 @@ class GraphUNet(BaseGraphModule):
         # And do the same for ground_truth and low_res:
         ground_truth = ground_truth.permute(0, 2, 1).view(B, C, H, W)
         low_res     = low_res    .permute(0, 2, 1).view(B, C_low_res, H, W)
+        
+        high_res_mean = diz_stats["mean_CERRA"]
+        high_res_std  = diz_stats["std_CERRA"]
+        # Assuming `ground_truth` was normalized the same way as `prediction`:
+        predictions  = predictions * high_res_std + high_res_mean
+        ground_truth = ground_truth * high_res_std + high_res_mean
+
+        # (3) If requested, save each sample’s un‐normalized prediction as a .npy file.
+        #     We'll save into a folder called "predictions" (create if needed),
+        #     and name each file using img_lr_name[i] + ".npy".
+        if self.savepreds_path:
+            
+            savepath = self.savepreds_path + "/" + self.load.split("/")[-2] + "/files"
+            
+            os.makedirs(savepath, exist_ok=True)
+            # predictions: Tensor of shape (B, C, H, W) after un‐normalization
+            preds_cpu = predictions.detach().cpu().numpy()
+            for i in range(batch_size):
+                base_name = img_lr_name[i]
+                out_path = os.path.join(savepath, f"nwp_{base_name}")
+                # Save the multi‐channel array as-is
+                # (so downstream you can load with np.load and get shape (C, H, W)).
+                np.save(out_path, preds_cpu[i])
+                # Alternatively, if you prefer numpy.save:
+                # np.save(out_path, preds_cpu[i])
          
         # Overall metrics across all variables.
         mse_all = torch.mean((predictions - ground_truth) ** 2)
@@ -349,16 +417,11 @@ class GraphUNet(BaseGraphModule):
         the low resolution input, target (high_res), prediction, and residual.
         The overall figure title indicates the variable name, and the plot is saved.
         """
-        import os
         import matplotlib.pyplot as plt
         
-        high_res_mean = diz_stats["mean_CERRA"].unsqueeze(-1).unsqueeze(-1)
-        high_res_std = diz_stats["std_CERRA"].unsqueeze(-1).unsqueeze(-1)
-        low_res_mean = diz_stats["mean_era5"].unsqueeze(-1).unsqueeze(-1)
-        low_res_std = diz_stats["std_era5"].unsqueeze(-1).unsqueeze(-1)
+        low_res_mean = diz_stats["mean_era5"]
+        low_res_std = diz_stats["std_era5"]
         
-        prediction = prediction * high_res_std + high_res_mean
-        high_res = high_res * high_res_std + high_res_mean
         img_lr = img_lr * low_res_std + low_res_mean
 
         # Select a random sample from the batch and a random variable index.
@@ -398,7 +461,7 @@ class GraphUNet(BaseGraphModule):
         fig.suptitle(f"{var_name} ({var_unit})", fontsize=16)
         
         # Save plot to a given folder.
-        save_dir = "plot_tests"
+        save_dir = self.savepreds_path + "/" + self.load.split("/")[-2] + "/pred_plots"
         os.makedirs(save_dir, exist_ok=True)
         filename = os.path.join(save_dir, f"{var_name}_sample_{sample}.png")
         fig.savefig(filename, bbox_inches='tight')

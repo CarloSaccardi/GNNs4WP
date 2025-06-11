@@ -236,17 +236,17 @@ class ERA5toCERRA2(torch.utils.data.Dataset):
                 
                 
             if self.split == "test":
-                mean_CERRA = self.data_mean_CERRA
-                std_CERRA = self.data_std_CERRA
-                mean_era5 = self.data_mean_era5
-                std_era5 = self.data_std_era5
+                mean_CERRA = self.data_mean_CERRA[:, None, None]
+                std_CERRA = self.data_std_CERRA[:, None, None]
+                mean_era5 = self.data_mean_era5[:, None, None]
+                std_era5 = self.data_std_era5[:, None, None]
                 diz_stats = {
                     "mean_CERRA": mean_CERRA,
                     "std_CERRA": std_CERRA,
                     "mean_era5": mean_era5,
                     "std_era5": std_era5
                 }
-                return sample_CERRA, sample_era5, diz_stats
+                return sample_CERRA, sample_era5, diz_stats, sample_name_CERRA
             
             else:
                 return sample_CERRA, sample_era5
