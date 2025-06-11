@@ -266,31 +266,6 @@ def main(args):
     # Set seed
     seed.seed_everything(args.seed)
 
-    # Load data
-    train_loader = torch.utils.data.DataLoader(
-        ERA5toCERRA2(
-            args.dataset_cerra,
-            args.dataset_era5,
-            split="train",
-            subset=bool(args.subset_ds),
-        ),
-        args.batch_size,
-        shuffle=True,
-        num_workers=args.n_workers,
-    )
-    
-    val_loader = torch.utils.data.DataLoader(
-        ERA5toCERRA2(
-            args.dataset_cerra,
-            args.dataset_era5,
-            split="val",
-            subset=bool(args.subset_ds),
-        ),
-        args.batch_size,
-        shuffle=False,
-        num_workers=args.n_workers,
-    )
-
     # Instantiate model + trainer
     if torch.cuda.is_available():
         device_name = "cuda"
@@ -366,24 +341,46 @@ def main(args):
         utils.init_wandb_metrics(logger)  # Do after wandb.init
 
     if args.eval:
-        if args.eval == "val":
-            eval_loader = val_loader
-        else:  # Test
-            eval_loader = torch.utils.data.DataLoader(
-                ERA5toCERRA2(
-                    args.dataset_cerra,
-                    args.dataset_era5,
-                    split="test",#TODO: Change to val
-                    subset=False,
-                ),
-                args.batch_size,
-                shuffle=False,
-                num_workers=args.n_workers,
-            )
+        eval_loader = torch.utils.data.DataLoader(
+            ERA5toCERRA2(
+                args.dataset_cerra,
+                args.dataset_era5,
+                split="test",#TODO: Change to val
+                subset=False,
+            ),
+            args.batch_size,
+            shuffle=False,
+            num_workers=args.n_workers,
+        )
 
         print(f"Running evaluation on {args.eval}")
         trainer.test(model=model, dataloaders=eval_loader)
     else:
+        
+        # Load data
+        train_loader = torch.utils.data.DataLoader(
+            ERA5toCERRA2(
+                args.dataset_cerra,
+                args.dataset_era5,
+                split="train",
+                subset=bool(args.subset_ds),
+            ),
+            args.batch_size,
+            shuffle=True,
+            num_workers=args.n_workers,
+        )
+        
+        val_loader = torch.utils.data.DataLoader(
+            ERA5toCERRA2(
+                args.dataset_cerra,
+                args.dataset_era5,
+                split="val",
+                subset=bool(args.subset_ds),
+            ),
+            args.batch_size,
+            shuffle=False,
+            num_workers=args.n_workers,
+        )
         # Train model
         trainer.fit(
             model=model,
