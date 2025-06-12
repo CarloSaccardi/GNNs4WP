@@ -296,31 +296,6 @@ def main(args):
     # Set seed
     seed.seed_everything(args.seed)
 
-    # Load data
-    train_loader = torch.utils.data.DataLoader(
-        ERA5toCERRA2(
-            args.dataset_cerra,
-            args.dataset_era5,
-            split="train",
-            subset=bool(args.subset_ds),
-        ),
-        args.batch_size,
-        shuffle=True,
-        num_workers=args.n_workers,
-    )
-    
-    val_loader = torch.utils.data.DataLoader(
-        ERA5toCERRA2(
-            args.dataset_cerra,
-            args.dataset_era5,
-            split="val",
-            subset=bool(args.subset_ds),
-        ),
-        args.batch_size,
-        shuffle=False,
-        num_workers=args.n_workers,
-    )
-
     # Instantiate model + trainer
     if torch.cuda.is_available():
         device_name = "cuda"
@@ -414,6 +389,31 @@ def main(args):
         print(f"Running evaluation on {args.eval}")
         trainer.test(model=model, dataloaders=eval_loader)
     else:
+        
+        # Load data
+        train_loader = torch.utils.data.DataLoader(
+            ERA5toCERRA2(
+                args.dataset_cerra,
+                args.dataset_era5,
+                split="train",
+                subset=bool(args.subset_ds),
+            ),
+            args.batch_size,
+            shuffle=True,
+            num_workers=args.n_workers,
+        )
+        
+        val_loader = torch.utils.data.DataLoader(
+            ERA5toCERRA2(
+                args.dataset_cerra,
+                args.dataset_era5,
+                split="val",
+                subset=bool(args.subset_ds),
+            ),
+            args.batch_size,
+            shuffle=False,
+            num_workers=args.n_workers,
+        )
         # Train model
         trainer.fit(
             model=model,
