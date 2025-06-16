@@ -394,24 +394,33 @@ class RegressionLoss:
     def __init__(self, lambda_psd: float, eps: float = 1e-12):
         self.lambda_psd = lambda_psd
         self.eps = eps                         # to avoid log(0)
+        
     
     @staticmethod
-    def get_psd_torch(a: torch.Tensor, *, dx: float, dim: int = -1
-                      ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Parameters
-        ----------
-        a   : (..., N)   real-valued signal
-        dx  : grid spacing (same units as the data’s physical dimension)
-        dim : dimension over which to take the FFT
-        """
-        N  = a.shape[dim]
-        dk = 2 * math.pi / dx                      # angular‐wavenumber step
-        k  = torch.arange(0, N // 2, device=a.device, dtype=a.dtype) * dk / N
+    def psd2d(a: torch.Tensor, *, dx: float, dy: float,
+            eps: float = 1e-12) -> torch.Tensor:
+        H, W = a.shape[-2:]
+        fft   = torch.fft.rfftn(a, dim=(-2, -1)) / (H * W)
+        psd   = 2.0 * (fft.real**2 + fft.imag**2)
+        return psd.clamp_min(eps)     
+    
+    # @staticmethod
+    # def get_psd_torch(a: torch.Tensor, *, dx: float, dim: int = -1
+    #                   ) -> Tuple[torch.Tensor, torch.Tensor]:
+    #     """
+    #     Parameters
+    #     ----------
+    #     a   : (..., N)   real-valued signal
+    #     dx  : grid spacing (same units as the data’s physical dimension)
+    #     dim : dimension over which to take the FFT
+    #     """
+    #     N  = a.shape[dim]
+    #     dk = 2 * math.pi / dx                      # angular‐wavenumber step
+    #     k  = torch.arange(0, N // 2, device=a.device, dtype=a.dtype) * dk / N
 
-        v_ft  = torch.fft.rfft(a, dim=dim)         # shape (..., N//2+1)
-        v_ft  = v_ft.narrow(dim, 0, N // 2)        # drop Nyquist to match k
-        psd   = (v_ft.real.square() + v_ft.imag.square()) / (N * dx)
+    #     v_ft  = torch.fft.rfft(a, dim=dim)         # shape (..., N//2+1)
+    #     v_ft  = v_ft.narrow(dim, 0, N // 2)        # drop Nyquist to match k
+    #     psd   = (v_ft.real.square() + v_ft.imag.square()) / (N * dx)
 
         return k, psd  
 
@@ -480,13 +489,13 @@ class RegressionLoss:
 
         zero_input = torch.zeros_like(y, device=img_clean.device)
         D_yn = net(zero_input, y_lr, force_fp32=False, augment_labels=augment_labels)
-        loss = torch.mean((D_yn - y) ** 2)
+        loss_mse = torch.mean((D_yn - y) ** 2)
         
         # ─── PSD loss ────────────────────────────────────────────────
-        _, psd_pred = self.get_psd_torch(
-            D_yn.permute(0, 2, 3, 1), dx=5.5, dim=2)
-        _, psd_true = self.get_psd_torch(
-            y.permute(0, 2, 3, 1),   dx=5.5, dim=2)
+        psd_pred = self.psd2d(
+            D_yn, dx=5.5, dy=5.5)
+        psd_true = self.psd2d(
+            y,   dx=5.5, dy=5.5)
 
         # RMSE between log-PSDs (scalar)
         psd_loss = torch.sqrt(
@@ -495,7 +504,7 @@ class RegressionLoss:
             )
         )
         
-        loss += self.lambda_psd * psd_loss
+        loss = loss_mse + self.lambda_psd * psd_loss
 
         return loss, y, D_yn
     
