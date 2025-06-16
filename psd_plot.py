@@ -36,15 +36,19 @@ CERRA_PATH = pathlib.Path(
     "/aspire/CarloData/zz_UNETs/data/big_dataset/CERRA/samples/test"
 )
 
+ERA5_PATH = pathlib.Path(
+    "/aspire/CarloData/zz_UNETs/data/big_dataset/ERA5/samples/test"
+)
+
 MODEL_PATHS: Dict[str, pathlib.Path] = {
     "SongUNetBase"     : pathlib.Path("/aspire/CarloData/zz_UNETs/data/big_dataset/preds/UNet-CNN-BigData-UNet-CNN-05_20_19-9299/files"),
-    "SongUNet01"   : pathlib.Path("/aspire/CarloData/zz_UNETs/data/big_dataset/preds/UNet-CNN-01-UNet-CNN-06_09_11-4102/files"),
+    #"SongUNet01"   : pathlib.Path("/aspire/CarloData/zz_UNETs/data/big_dataset/preds/UNet-CNN-01-UNet-CNN-06_09_11-4102/files"),
     "SongUNet001"  : pathlib.Path("/aspire/CarloData/zz_UNETs/data/big_dataset/preds/UNet-CNN-001-UNet-CNN-06_08_19-1434/files"),
     #"SongUNet0001" : pathlib.Path("/aspire/CarloData/zz_UNETs/data/big_datase/tpreds/UNet-CNN-0001-UNet-CNN-06_09_11-3299/files"),
-    "GNNUNet"      : pathlib.Path("/aspire/CarloData/zz_UNETs/data/big_dataset/preds/UNet-GNN-BigData-graph_efm-4x64-05_22_10-8678/files"),
+    #"GNNUNet"      : pathlib.Path("/aspire/CarloData/zz_UNETs/data/big_dataset/preds/UNet-GNN-BigData-graph_efm-4x64-05_22_10-8678/files"),
 }
 
-ERA5_DX_DEG = 0.25                       # longitude spacing of reference grid
+ERA5_DX_DEG = 25                       # longitude spacing of reference grid
 N_BINS = 200                             # PDF histogram resolution
 EPS = 1e-12                              # avoids log(0)
 OUT_DIR = pathlib.Path("plot_tests")
@@ -101,10 +105,10 @@ def extract_var(stack: np.ndarray, var: str) -> np.ndarray:
 def psd_for_var(stack: np.ndarray, var: str,
                 dx_ref: float, n_ref_lon: int) -> Tuple[np.ndarray, np.ndarray]:
     """Mean PSD over latitude & samples."""
-    n_lon = stack.shape[2]
-    dx = dx_ref * (n_ref_lon / n_lon)
+    #n_lon = stack.shape[2]
+    #dx = dx_ref * (n_ref_lon / n_lon)
     data = extract_var(stack, var)
-    k, psd = get_psd(data, dx, axis=2)
+    k, psd = get_psd(data, dx_ref, axis=2)
     return k, psd.mean(axis=1).mean(axis=0)
 
 def pdf_for_var(stack: np.ndarray, var: str,
@@ -121,7 +125,10 @@ def pdf_for_var(stack: np.ndarray, var: str,
 def main() -> None:
     print("Loading CERRA ground truth …")
     cerra = load_stack(CERRA_PATH)
+    era5 = load_stack(ERA5_PATH)
     n_ref_lon = cerra.shape[2]
+    
+    dx_ref = ERA5_DX_DEG * (era5.shape[2] / n_ref_lon )  # adjust dx for CERRA
 
     print("Loading model predictions …")
     model_stacks = {name: load_stack(path) for name, path in MODEL_PATHS.items()}
@@ -131,10 +138,10 @@ def main() -> None:
         print(f"\nVariable: {var}")
 
         # ----------   PSD   ----------
-        k_ref, psd_ref = psd_for_var(cerra, var, ERA5_DX_DEG, n_ref_lon)
+        k_ref, psd_ref = psd_for_var(cerra, var, dx_ref, n_ref_lon)
         k_models, psd_models = {}, {}
         for name, stack in model_stacks.items():
-            k_m, psd_m = psd_for_var(stack, var, ERA5_DX_DEG, n_ref_lon)
+            k_m, psd_m = psd_for_var(stack, var, dx_ref, n_ref_lon)
             k_models[name], psd_models[name] = k_m, psd_m
 
         plt.figure(figsize=(7, 5))
