@@ -247,6 +247,18 @@ def get_args():
         default=0.1,
         help="Weight for the PSD loss term (default: 0.0)",
     )
+    parser.add_argument(
+        "--init_lambda",
+        type=float,
+        default=0.0,
+        help="Weight for the PSD loss term (default: 0.0)",
+    )
+    parser.add_argument(
+        "--max_lambda",
+        type=float,
+        default=0.1,
+        help="Weight for the PSD loss term (default: 0.0)",
+    )
     return parser.parse_args()
 
 def main(args):

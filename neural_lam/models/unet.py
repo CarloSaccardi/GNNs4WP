@@ -53,7 +53,7 @@ class UNetWrapper(pl.LightningModule):
             **self.model_kwargs,
         )
 
-        self.loss_fn = RegressionLoss(args.lambda_psd)
+        self.loss_fn = RegressionLoss(args.init_lambda, args.max_lambda, args.epochs)
 
     def forward(
         self,
@@ -115,7 +115,8 @@ class UNetWrapper(pl.LightningModule):
         loss, _, _ = self.loss_fn(
                             net=self,
                             img_clean=img_clean,
-                            img_lr=img_lr
+                            img_lr=img_lr,
+                            current_epoch=self.current_epoch,
                         )
         
         log_dict = {
@@ -134,7 +135,8 @@ class UNetWrapper(pl.LightningModule):
         val_loss, ground_truth, predictions = self.loss_fn(
                                                 net=self,
                                                 img_clean=img_clean,
-                                                img_lr=img_lr
+                                                img_lr=img_lr,
+                                                current_epoch=self.current_epoch
                                             )
         
         # Log loss per time step forward and mean
@@ -391,8 +393,15 @@ class RegressionLoss:
     arXiv preprint arXiv:2309.15214.
     """
 
-    def __init__(self, lambda_psd: float, eps: float = 1e-12):
-        self.lambda_psd = lambda_psd
+    def __init__(self, 
+                 init_lambda: float, 
+                 max_lambda: float, 
+                 anneal_epochs: int, 
+                 eps: float = 1e-12):
+        
+        self.init_lambda = init_lambda
+        self.max_lambda = max_lambda
+        self.anneal_epochs = anneal_epochs
         self.eps = eps                         # to avoid log(0)
         
     
@@ -429,6 +438,7 @@ class RegressionLoss:
         net: torch.nn.Module,
         img_clean: torch.Tensor,
         img_lr: torch.Tensor,
+        current_epoch: int,
         augment_pipe: Optional[
             Callable[[torch.Tensor], Tuple[torch.Tensor, Optional[torch.Tensor]]]
         ] = None,
@@ -497,19 +507,21 @@ class RegressionLoss:
         # psd_true = self.psd2d(
         #     y,   dx=5.5, dy=5.5)
         
-        _, psd_pred = self.get_psd_torch(
+        k, psd_pred = self.get_psd_torch(
             D_yn.permute(0, 2, 3, 1), dx=5.5, dim=2)
         _, psd_true = self.get_psd_torch(
             y.permute(0, 2, 3, 1),   dx=5.5, dim=2)
+        
+        freq_weights = (k / k.max()).pow(2)  # shape: (F,)
+        w = freq_weights.view(1, 1, -1, 1)  
 
         # RMSE between log-PSDs (scalar)
-        psd_loss = torch.sqrt(
-            torch.mean(
-                (torch.log(psd_pred + self.eps) - torch.log(psd_true + self.eps)) ** 2
-            )
-        )
+        diff_log_psd = torch.log(psd_pred + self.eps) - torch.log(psd_true + self.eps)
+        psd_loss = torch.sqrt(torch.mean(w * diff_log_psd ** 2))
         
-        loss = loss_mse + self.lambda_psd * psd_loss
+        lambda_psd = min(self.init_lambda + (self.max_lambda - self.init_lambda) * (current_epoch / self.anneal_epochs)**2, self.max_lambda)
+        
+        loss = loss_mse + lambda_psd * psd_loss
 
         return loss, y, D_yn
     
