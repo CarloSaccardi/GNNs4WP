@@ -112,7 +112,7 @@ class UNetWrapper(pl.LightningModule):
         img_clean, img_lr, *rest = batch
         img_clean = img_clean.float()
         img_lr = img_lr.float()
-        loss, _, _ = self.loss_fn(
+        loss, _, _, loss_mse, psd_loss, lambda_psd, scaled_psd_loss = self.loss_fn(
                             net=self,
                             img_clean=img_clean,
                             img_lr=img_lr,
@@ -121,6 +121,10 @@ class UNetWrapper(pl.LightningModule):
         
         log_dict = {
             "train_loss": loss,
+            "train_loss_mse": loss_mse,
+            "train_loss_psd": psd_loss,
+            "train_lambda_psd": lambda_psd,
+            "train_scaled_psd_loss": scaled_psd_loss,
         }
         self.log_dict(
             log_dict, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True
@@ -132,7 +136,7 @@ class UNetWrapper(pl.LightningModule):
         img_clean, img_lr = batch
         img_clean = img_clean.float()
         img_lr = img_lr.float()
-        val_loss, ground_truth, predictions = self.loss_fn(
+        val_loss, ground_truth, predictions, loss_mse, psd_loss, lambda_psd, scaled_psd_loss = self.loss_fn(
                                                 net=self,
                                                 img_clean=img_clean,
                                                 img_lr=img_lr,
@@ -141,7 +145,11 @@ class UNetWrapper(pl.LightningModule):
         
         # Log loss per time step forward and mean
         val_log_dict = {
-            "val_loss": val_loss
+            "val_loss": val_loss,
+            "val_loss_mse": loss_mse,
+            "val_loss_psd": psd_loss,
+            "val_lambda_psd": lambda_psd,
+            "val_scaled_psd_loss": scaled_psd_loss,
         }
         self.log_dict(
             val_log_dict, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True
@@ -518,10 +526,11 @@ class RegressionLoss:
         # RMSE between log-PSDs (scalar)
         diff_log_psd = torch.log(psd_pred + self.eps) - torch.log(psd_true + self.eps)
         psd_loss = torch.sqrt(torch.mean(w * diff_log_psd ** 2))
+        # psd_loss = torch.sqrt(torch.mean(diff_log_psd ** 2))
         
         lambda_psd = min(self.init_lambda + (self.max_lambda - self.init_lambda) * (current_epoch / self.anneal_epochs)**2, self.max_lambda)
         
         loss = loss_mse + lambda_psd * psd_loss
 
-        return loss, y, D_yn
+        return loss, y, D_yn, loss_mse, psd_loss, lambda_psd, lambda_psd * psd_loss
     
