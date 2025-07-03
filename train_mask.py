@@ -195,6 +195,12 @@ def get_args():
         help="upper epoch limit (default: 200)",
     )
     parser.add_argument(
+        "--anneal_epochs",
+        type=int,
+        default=200,
+        help="number of epochs to anneal lambda (default: 200)",
+    )
+    parser.add_argument(
         "--batch_size", type=int, default=8, help="batch size (default: 4)"
     )
     parser.add_argument(
@@ -259,6 +265,12 @@ def get_args():
         default=0.1,
         help="Weight for the PSD loss term (default: 0.0)",
     )
+    parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="Path to resume training from (default: None)",
+    )   
     return parser.parse_args()
 
 def main(args):
@@ -398,6 +410,7 @@ def main(args):
             model=model,
             train_dataloaders=train_loader,
             val_dataloaders=val_loader,
+            ckpt_path= args.resume if args.resume else None,
             
         )
 

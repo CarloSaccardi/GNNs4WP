@@ -53,7 +53,7 @@ class UNetWrapper(pl.LightningModule):
             **self.model_kwargs,
         )
 
-        self.loss_fn = RegressionLoss(args.init_lambda, args.max_lambda, args.epochs)
+        self.loss_fn = RegressionLoss(args.init_lambda, args.max_lambda, args.anneal_epochs)
 
     def forward(
         self,
