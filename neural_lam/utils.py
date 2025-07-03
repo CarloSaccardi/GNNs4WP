@@ -28,6 +28,11 @@ from torch import Tensor
 from neural_lam import constants
 from physicsnemo.utils.patching import GridPatching2D
 
+import numpy as np
+from pathlib import Path
+from skimage.metrics import structural_similarity as ssim
+from skimage.metrics import peak_signal_noise_ratio as psnr
+
 
 def init_wandb_metrics(wandb_logger):
     """
@@ -431,6 +436,96 @@ def load_dataset_stats(dataset_name, device="cpu"):
         "data_mean": data_mean,
         "data_std": data_std,
     }
-    
+
+
+def compute_metrics(
+    path_gt: str,
+    path_pred: str,
+    save_dir: str,
+    *,
+    var_names: list[str] | None = None,
+) -> dict[str, dict[str, float]]:
+    """
+    Compare every .npy file that exists in BOTH `path_gt` and `path_pred`,
+    assuming each file has shape (H, W, C) with the same C variables.
+
+    Returns a nested dict: metrics[var_name][metric] = value
+    and writes the same information to <save_dir>/metrics.txt.
+    """
+
+    path_gt, path_pred = Path(path_gt), Path(path_pred)
+    gt_files   = {f.name: f for f in path_gt.glob("*.npy")}
+    pred_files = {f.name: f for f in path_pred.glob("*.npy")}
+    common     = sorted(gt_files.keys() & pred_files.keys())
+
+    if not common:
+        raise FileNotFoundError("No overlapping .npy filenames in the two folders.")
+
+    # ----- discover channel count from the first file
+    first = np.load(gt_files[common[0]])
+    if first.ndim != 3:
+        raise ValueError(
+            f"Expected shape (H, W, C). Found {first.shape} in {common[0]!r}"
+        )
+    C = first.shape[-1]
+    if var_names is None:
+        var_names = [f"var{c}" for c in range(C)]
+    if len(var_names) != C:
+        raise ValueError("Length of var_names must equal number of channels (C).")
+
+    # accumulators: metric_sums[var][metric] = running total
+    metric_sums = {v: {"MAE": 0.0, "RMSE": 0.0, "SSIM": 0.0, "PSNR": 0.0}
+                   for v in var_names}
+    n_files = 0
+
+    for fname in common:
+        gt  = np.load(gt_files[fname]).astype(np.float32)
+        prd = np.load(pred_files[fname]).astype(np.float32)
+
+        if gt.shape != prd.shape:
+            raise ValueError(f"Shape mismatch for {fname}: {gt.shape} vs {prd.shape}")
+        if gt.shape[-1] != C:
+            raise ValueError(f"Channel count changed in {fname}: got {gt.shape[-1]}, expected {C}")
+
+        for c, vname in enumerate(var_names):
+            g = gt[..., c]
+            p = prd[..., c]
+
+            # pixel-wise errors
+            metric_sums[vname]["MAE"]  += np.abs(p - g).mean()
+            metric_sums[vname]["RMSE"] += np.sqrt(np.mean((p - g) ** 2))
+
+            # SSIM & PSNR
+            dr = g.max() - g.min()  # data_range
+            metric_sums[vname]["SSIM"] += ssim(g, p, data_range=dr)
+            metric_sums[vname]["PSNR"] += psnr(g, p, data_range=dr)
+
+        n_files += 1
+
+    # --- final averages
+    metrics = {
+        v: {m: total / n_files for m, total in metric_sums[v].items()}
+        for v in var_names
+    }
+
+    # --- save
+    os.makedirs(save_dir, exist_ok=True)
+    with open(Path(save_dir) / "metrics.txt", "w") as fh:
+        for v in var_names:
+            fh.write(f"[{v}]\n")
+            for m, val in metrics[v].items():
+                fh.write(f"  {m}: {val:.6f}\n")
+            fh.write("\n")
+
+    return metrics
+
+
+
+if __name__ == "__main__":
+    # Example usage
+    var_names=['u10', 'v10', 't2m', 'sshf', 'zust']
+    path1=path2= "/aspire/CarloData/zz_UNETs/data/CentralEurope_2014_2020/CERRA/samples/test"
+    metrics = compute_metrics(path1, path2, "/space2/csaccardi/neural-lam")
+    print(metrics)
     
     
