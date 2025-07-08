@@ -482,6 +482,9 @@ def compute_metrics(
         gt  = np.load(gt_files[fname]).astype(np.float32)
         prd = np.load(pred_files[fname]).astype(np.float32)
 
+        gt  = ensure_channels_last(gt,  C)
+        prd = ensure_channels_last(prd, C)
+
         if gt.shape != prd.shape:
             raise ValueError(f"Shape mismatch for {fname}: {gt.shape} vs {prd.shape}")
         if gt.shape[-1] != C:
@@ -497,7 +500,7 @@ def compute_metrics(
 
             # SSIM & PSNR
             dr = g.max() - g.min()  # data_range
-            metric_sums[vname]["SSIM"] += ssim(g, p, data_range=dr)
+            metric_sums[vname]["SSIM"] += ssim(g, p, data_range=dr) #for these metrics tesnrs should be (C, H, W) hence 
             metric_sums[vname]["PSNR"] += psnr(g, p, data_range=dr)
 
         n_files += 1
@@ -510,7 +513,7 @@ def compute_metrics(
 
     # --- save
     os.makedirs(save_dir, exist_ok=True)
-    with open(Path(save_dir) / "metrics.txt", "w") as fh:
+    with open(Path(save_dir) / "metrics_new.txt", "w") as fh:
         for v in var_names:
             fh.write(f"[{v}]\n")
             for m, val in metrics[v].items():
@@ -520,12 +523,44 @@ def compute_metrics(
     return metrics
 
 
+def ensure_channels_last(arr: np.ndarray, C_expected: int) -> np.ndarray:
+    """Convert (H,W,C) or (C,H,W) → (H,W,C). Error if neither axis matches C."""
+    if arr.shape[-1] == C_expected:      # already (H,W,C)
+        return arr
+    if arr.shape[0] == C_expected:       # assume (C,H,W)
+        return np.moveaxis(arr, 0, -1)   # → (H,W,C)
+    raise ValueError(f"Cannot locate channel axis in shape {arr.shape}")
+
+
 
 if __name__ == "__main__":
-    # Example usage
-    var_names=['u10', 'v10', 't2m', 'sshf', 'zust']
-    path1=path2= "/aspire/CarloData/zz_UNETs/data/CentralEurope_2014_2020/CERRA/samples/test"
-    metrics = compute_metrics(path1, path2, "/space2/csaccardi/neural-lam")
-    print(metrics)
+    import argparse
+    from pathlib import Path
+    from pprint import pprint
+
+    parser = argparse.ArgumentParser(
+        description="Compute MAE, RMSE, SSIM, PSNR for two folders of (H,W,C) .npy files."
+    )
+    parser.add_argument("--path_gt",   required=True, help="Directory with ground-truth .npy files")
+    parser.add_argument("--path_pred", required=True, help="Directory with prediction  .npy files")
+    parser.add_argument("--save_dir",  required=True, help="Where metrics_new.txt will be written")
+    parser.add_argument(
+        "--var_names",
+        nargs="*",
+        default=None,
+        help="Optional list of variable names (length must equal channel count, e.g. "
+             "--var_names u10 v10 t2m sshf zust).",
+    )
+    args = parser.parse_args()
+
+    # Resolve paths so the metrics file ends up exactly where you expect
+    metrics = compute_metrics(
+        Path(args.path_gt).expanduser(),
+        Path(args.path_pred).expanduser(),
+        Path(args.save_dir).expanduser(),
+        var_names=['u10', 'v10', 't2m', 'sshf', 'zust'],
+    )
+
+    pprint(metrics)
     
     
