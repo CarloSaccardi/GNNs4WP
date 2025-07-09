@@ -266,6 +266,12 @@ def get_args():
         help="Weight for the PSD loss term (default: 0.0)",
     )
     parser.add_argument(
+        "--loss_type",
+        type=str,
+        default=None,
+        help="Type of loss to use (default: None --> MSE)",
+    )
+    parser.add_argument(
         "--resume",
         type=str,
         default=None,

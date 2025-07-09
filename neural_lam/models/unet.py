@@ -13,6 +13,8 @@ import numpy as np
 from scipy.fft import fft
 import math
 
+from neural_lam.models.fourerLosses import FourierLossETH, FourierLossDelft, FourierLossHK, FourierLossMSEAmpHF
+
 network_module = importlib.import_module("physicsnemo.models.diffusion")
 
 
@@ -52,8 +54,17 @@ class UNetWrapper(pl.LightningModule):
             out_channels=args.img_out_channels,
             **self.model_kwargs,
         )
+        
+        loss_ditc = {
+            "FourierLossETH": FourierLossETH,
+            "FourierLossDelft": FourierLossDelft,
+            "FourierLossHK": FourierLossHK,
+            "FourierLossMSEAmpHF": FourierLossMSEAmpHF
+        }
+        
+        loss_func = loss_ditc[args.loss_type]() if args.loss_type in loss_ditc else None
 
-        self.loss_fn = RegressionLoss(args.init_lambda, args.max_lambda, args.anneal_epochs)
+        self.loss_fn = RegressionLoss(args.init_lambda, args.max_lambda, args.anneal_epochs, loss_func)
 
     def forward(
         self,
@@ -112,7 +123,7 @@ class UNetWrapper(pl.LightningModule):
         img_clean, img_lr, *rest = batch
         img_clean = img_clean.float()
         img_lr = img_lr.float()
-        loss, _, _, loss_mse, psd_loss, lambda_psd, scaled_psd_loss = self.loss_fn(
+        loss, _, _, loss_space, loss_amp = self.loss_fn(
                             net=self,
                             img_clean=img_clean,
                             img_lr=img_lr,
@@ -121,10 +132,8 @@ class UNetWrapper(pl.LightningModule):
         
         log_dict = {
             "train_loss": loss,
-            "train_loss_mse": loss_mse,
-            "train_loss_psd": psd_loss,
-            "train_lambda_psd": lambda_psd,
-            "train_scaled_psd_loss": scaled_psd_loss,
+            "train_loss_mse": loss_space,
+            "train_loss_psd": loss_amp,
         }
         self.log_dict(
             log_dict, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True
@@ -136,7 +145,7 @@ class UNetWrapper(pl.LightningModule):
         img_clean, img_lr = batch
         img_clean = img_clean.float()
         img_lr = img_lr.float()
-        val_loss, ground_truth, predictions, loss_mse, psd_loss, lambda_psd, scaled_psd_loss = self.loss_fn(
+        val_loss, ground_truth, predictions, loss_space, loss_amp = self.loss_fn(
                                                 net=self,
                                                 img_clean=img_clean,
                                                 img_lr=img_lr,
@@ -146,10 +155,8 @@ class UNetWrapper(pl.LightningModule):
         # Log loss per time step forward and mean
         val_log_dict = {
             "val_loss": val_loss,
-            "val_loss_mse": loss_mse,
-            "val_loss_psd": psd_loss,
-            "val_lambda_psd": lambda_psd,
-            "val_scaled_psd_loss": scaled_psd_loss,
+            "val_loss_mse": loss_space,
+            "val_loss_psd": loss_amp,
         }
         self.log_dict(
             val_log_dict, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True
@@ -405,11 +412,13 @@ class RegressionLoss:
                  init_lambda: float, 
                  max_lambda: float, 
                  anneal_epochs: int, 
+                 loss_func: Optional[Callable] = None,
                  eps: float = 1e-12):
         
         self.init_lambda = init_lambda
         self.max_lambda = max_lambda
         self.anneal_epochs = anneal_epochs
+        self.loss_func = loss_func
         self.eps = eps                         # to avoid log(0)
         
     
@@ -507,7 +516,7 @@ class RegressionLoss:
 
         zero_input = torch.zeros_like(y, device=img_clean.device)
         D_yn = net(zero_input, y_lr, force_fp32=False, augment_labels=augment_labels)
-        loss_mse = torch.mean((D_yn - y) ** 2)
+        # loss_mse = torch.mean((D_yn - y) ** 2)
         
         # ─── PSD loss ────────────────────────────────────────────────
         # psd_pred = self.psd2d(
@@ -515,22 +524,31 @@ class RegressionLoss:
         # psd_true = self.psd2d(
         #     y,   dx=5.5, dy=5.5)
         
-        k, psd_pred = self.get_psd_torch(
-            D_yn.permute(0, 2, 3, 1), dx=5.5, dim=2)
-        _, psd_true = self.get_psd_torch(
-            y.permute(0, 2, 3, 1),   dx=5.5, dim=2)
+        # k, psd_pred = self.get_psd_torch(
+        #     D_yn.permute(0, 2, 3, 1), dx=5.5, dim=2)
+        # _, psd_true = self.get_psd_torch(
+        #     y.permute(0, 2, 3, 1),   dx=5.5, dim=2)
         
-        freq_weights = (k / k.max()).pow(2)  # shape: (F,)
-        w = freq_weights.view(1, 1, -1, 1)  
+        # freq_weights = (k / k.max()).pow(2)  # shape: (F,)
+        # w = freq_weights.view(1, 1, -1, 1)  
 
         # RMSE between log-PSDs (scalar)
-        diff_log_psd = torch.log(psd_pred + self.eps) - torch.log(psd_true + self.eps)
-        psd_loss = torch.sqrt(torch.mean(w * diff_log_psd ** 2))
+        # diff_log_psd = torch.log(psd_pred + self.eps) - torch.log(psd_true + self.eps)
+        # psd_loss = torch.sqrt(torch.mean(w * diff_log_psd ** 2))
         # psd_loss = torch.sqrt(torch.mean(diff_log_psd ** 2))
         
-        lambda_psd = min(self.init_lambda + (self.max_lambda - self.init_lambda) * (current_epoch / self.anneal_epochs)**2, self.max_lambda)
+        if self.loss_func is not None:
+            term_space, term_amp = self.loss_func(D_yn, y)
+            loss_space = self.init_lambda * term_space
+            loss_amp = self.max_lambda * term_amp
+        else:
+            loss = torch.mean((D_yn - y) ** 2)
+            loss_space = loss #MSE
+            loss_amp = torch.tensor(0.0, device=D_yn.device) #just zero
+            
+        # lambda_psd = min(self.init_lambda + (self.max_lambda - self.init_lambda) * (current_epoch / self.anneal_epochs)**2, self.max_lambda)
         
-        loss = loss_mse + lambda_psd * psd_loss
+        loss = self.init_lambda * term_space +  self.max_lambda * term_amp
 
-        return loss, y, D_yn, loss_mse, psd_loss, lambda_psd, lambda_psd * psd_loss
+        return loss, y, D_yn, loss_space, loss_amp #, lambda_psd, lambda_psd * psd_loss
     
