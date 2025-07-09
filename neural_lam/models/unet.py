@@ -539,16 +539,15 @@ class RegressionLoss:
         
         if self.loss_func is not None:
             term_space, term_amp = self.loss_func(D_yn, y)
-            loss_space = self.init_lambda * term_space
-            loss_amp = self.max_lambda * term_amp
+            lambda_psd = min(self.init_lambda + (self.max_lambda - self.init_lambda) * (current_epoch / self.anneal_epochs)**2, self.max_lambda)
+            loss_amp = lambda_psd * term_amp
+            loss_space = term_space
+            loss = loss_space + loss_amp
         else:
             loss = torch.mean((D_yn - y) ** 2)
             loss_space = loss #MSE
             loss_amp = torch.tensor(0.0, device=D_yn.device) #just zero
             
-        # lambda_psd = min(self.init_lambda + (self.max_lambda - self.init_lambda) * (current_epoch / self.anneal_epochs)**2, self.max_lambda)
-        
-        loss = self.init_lambda * term_space +  self.max_lambda * term_amp
 
         return loss, y, D_yn, loss_space, loss_amp #, lambda_psd, lambda_psd * psd_loss
     
