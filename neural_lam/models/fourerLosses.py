@@ -118,9 +118,9 @@ class FourierLossDelft(nn.Module):
         """
         L2 loss between log-amplitudes
         """
-        pred_log = torch.log(predF.abs())
-        target_log = torch.log(targetF.abs())
-        diff = (pred_log - target_log) ** 2
+        pred_amp = predF.abs()
+        target_amp = targetF.abs()
+        diff = (pred_amp - target_amp) ** 2
         diff = diff[..., : diff.shape[-2] // 2, :]
         loss = diff.mean()
         return loss
