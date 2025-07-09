@@ -235,6 +235,66 @@ class FourierLossMSEAmpHF(nn.Module):
         # Emphasize high frequencies (square to exaggerate)
         w = r**2
         return w.unsqueeze(0).unsqueeze(0)  # shape [1,1,H,W]
+    
+    
+class FourierLossCarlo(nn.Module):
+    def __init__(self):
+        super(FourierLossCarlo, self).__init__()
+        self.dx = 5.5 # grid spacing in the physical dimension
+        self.eps = 1e-8  # small value to avoid log(0)
+        
+
+    def forward(self, sr, hr):
+        
+        
+        sr_psd = self.getpsd(sr)
+        hr_psd = self.getpsd(hr)
+        diff_log_psd = torch.log(sr_psd + self.eps) - torch.log(hr_psd + self.eps)
+        w = self.make_high_freq_weights(sr)
+        mse_loss = torch.mean((sr - hr) ** 2)
+        psd_loss = torch.sqrt(torch.mean(w * diff_log_psd ** 2))
+        return mse_loss, psd_loss
+
+    def getpsd(self, image):
+        """
+        Computes the 2D power spectral density (PSD) of real-valued images.
+        
+        Parameters:
+            image : Tensor of shape [B, C, H, W]
+            self.dx : spatial sampling interval (scalar)
+
+        Returns:
+            psd : Tensor of shape [B, C, H, W//2+1] (after rFFTN)
+        """
+        # 2D real FFT
+        v_ft = torch.fft.rfftn(image, dim=(2, 3))
+
+        # Compute power (|F|^2) and normalize by spatial size and dx
+        N = image.shape[-2] * image.shape[-1]
+        psd = (v_ft.real**2 + v_ft.imag**2) / (N * self.dx)
+
+        return psd
+    
+    def make_high_freq_weights(self, image):
+        """
+        Creates a 2D weight map that emphasizes high spatial frequencies,
+        aligned with rFFTN output: shape [B, C, H, W//2+1]
+        """
+        _, _, H, W = image.shape
+        W_rfft = W // 2 + 1
+
+        dk_h = 2 * math.pi / (H * self.dx)
+        dk_w = 2 * math.pi / (W * self.dx)
+
+        k_h = torch.arange(H, device=image.device).reshape(H, 1) * dk_h  # vertical
+        k_w = torch.arange(W_rfft, device=image.device).reshape(1, W_rfft) * dk_w  # horizontal
+
+        k_grid = torch.sqrt(k_h ** 2 + k_w ** 2)  # shape: [H, W//2+1]
+        weights = (k_grid / k_grid.max()).pow(2)  # quadratic emphasis
+
+        return weights.unsqueeze(0).unsqueeze(0)  # shape [1, 1, H, W//2+1]
+    
+    
 
 
 if __name__ == '__main__':
@@ -243,11 +303,11 @@ if __name__ == '__main__':
     F_ETH = FourierLossETH()
     F_Delft = FourierLossDelft()
     F_HK = FourierLossHK()
-    F_MSEAmpHF = FourierLossMSEAmpHF()
+    F_Carlo = FourierLossCarlo()
     phase_loss_ETH, amp_loss_ETH = F_ETH(sr_tensor, hr_tensor)
     phase_loss_Delft, amp_loss_Delft = F_Delft(sr_tensor, hr_tensor)
     corr_loss_HK, amp_loss_HK = F_HK(sr_tensor, hr_tensor)
-    pix_loss_, amp_loss_ = F_MSEAmpHF(sr_tensor, hr_tensor)
+    pix_loss_, amp_loss_ = F_Carlo(sr_tensor, hr_tensor)
     
     
     print(f'ETH Phase Loss: {phase_loss_ETH.item()}, Amplitude Loss: {amp_loss_ETH.item()}')

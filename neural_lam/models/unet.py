@@ -13,7 +13,7 @@ import numpy as np
 from scipy.fft import fft
 import math
 
-from neural_lam.models.fourerLosses import FourierLossETH, FourierLossDelft, FourierLossHK, FourierLossMSEAmpHF
+from neural_lam.models.fourerLosses import FourierLossETH, FourierLossDelft, FourierLossHK, FourierLossCarlo
 
 network_module = importlib.import_module("physicsnemo.models.diffusion")
 
@@ -59,7 +59,7 @@ class UNetWrapper(pl.LightningModule):
             "FourierLossETH": FourierLossETH,
             "FourierLossDelft": FourierLossDelft,
             "FourierLossHK": FourierLossHK,
-            "FourierLossMSEAmpHF": FourierLossMSEAmpHF
+            "FourierLossCarlo": FourierLossCarlo
         }
         
         loss_func = loss_ditc[args.loss_type]() if args.loss_type in loss_ditc else None
