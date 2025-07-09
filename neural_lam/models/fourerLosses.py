@@ -205,19 +205,21 @@ class FourierLossMSEAmpHF(nn.Module):
         return sr, hr
 
     def get_pixel_mse_loss(self, pred, target):
-        return F.mse_loss(pred, target, reduction=self.reduction)
+        return torch.mean((pred - target) ** 2)
 
     def get_log_amplitude_loss(self, predF, targetF, freq_weights):
-        pred_log = torch.log(predF.abs())
-        target_log = torch.log(targetF.abs())
-        diff = (pred_log - target_log) ** 2
+        # pred_log = torch.log(predF.abs())
+        # target_log = torch.log(targetF.abs())
+        pred_phase = predF.abs()
+        target_phase = targetF.abs()
+        diff = (pred_phase - target_phase) ** 2
 
         # Positive-frequency half-plane
         diff = diff[..., : diff.shape[-2] // 2, :]
         freq_weights = freq_weights[..., : diff.shape[-2], :]
 
         weighted = diff * freq_weights
-        return weighted.mean()
+        return torch.mean(weighted)
 
     def make_high_freq_weights(self, shape, device):
         # shape: [B, C, H, W] of FFT image
