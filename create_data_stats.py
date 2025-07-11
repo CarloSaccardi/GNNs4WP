@@ -82,18 +82,17 @@ def compute_running_stats(loader: DataLoader, use_high: bool) -> tuple[torch.Ten
 
     return mean.float(), std.float()               # down-cast back to fp32
 
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--dataset_cerra",
         type=Path,
-        default=Path("/aspire/CarloData/zz_UNETs/data/big_dataset/CERRA"),
+        default=Path("/aspire/CarloData/zz_UNETs/data/CentralEurope_2014_2020/CERRA"),
     )
     parser.add_argument(
         "--dataset_era5",
         type=Path,
-        default=Path("/aspire/CarloData/zz_UNETs/data/big_dataset/ERA5"),
+        default=Path("/aspire/CarloData/zz_UNETs/data/CentralEurope_2014_2020/ERA5"),
     )
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--n_workers", type=int, default=4)
