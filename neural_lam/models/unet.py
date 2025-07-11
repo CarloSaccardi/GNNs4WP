@@ -192,10 +192,11 @@ class UNetWrapper(pl.LightningModule):
 
         # (1) Get raw predictions & ground_truth from your loss_fn
         #     They are assumed to be in normalized space: shape (B, C, H, W)
-        _, ground_truth, predictions = self.loss_fn(
+        _, ground_truth, predictions, _, _ = self.loss_fn(
             net=self,
             img_clean=img_clean,
-            img_lr=img_lr
+            img_lr=img_lr,
+            current_epoch=self.current_epoch
         )
 
         # (2) Un‐normalize both `predictions` and `ground_truth` at once,
