@@ -37,6 +37,7 @@ class UNetWrapper(pl.LightningModule):
         self.wandb_project = args.wandb_project
         self.savepreds_path = args.savepreds_path
         self.load = args.load
+        self.noise_encoder = torch.nn.Linear(32, 32)
         
         self.model_kwargs = {
             'checkpoint_level': args.checkpoint_level,
@@ -103,27 +104,34 @@ class UNetWrapper(pl.LightningModule):
             If the model output dtype doesn't match the expected dtype.
         """
         # SR: concatenate input channels
+        batch_preds = []
         if img_lr is not None:
             x = torch.cat((x, img_lr), dim=1)
+        for _ in range(16):  
+                
+            z = torch.randn(x.shape[0], 32, device=x.device)
+            z = self.noise_encoder(z)
 
+            F_x = self.model(
+                x,  # (c_in * x).to(dtype),
+                torch.zeros(x.shape[0], device=x.device),  # c_noise.flatten()
+                class_labels=None,
+                z=z,
+                **model_kwargs,
+            )
 
-        F_x = self.model(
-            x,  # (c_in * x).to(dtype),
-            torch.zeros(x.shape[0], device=x.device),  # c_noise.flatten()
-            class_labels=None,
-            **model_kwargs,
-        )
-
-        # skip connection
-        D_x = F_x.to(torch.float32)
-        return D_x
+            # skip connection
+            D_x = F_x.to(torch.float32)
+            batch_preds.append(D_x)
+            
+        return torch.stack(batch_preds, dim=1)
 
     def training_step(self, batch, *args):
         batch_size = batch[0].shape[0]
         img_clean, img_lr, *rest = batch
         img_clean = img_clean.float()
         img_lr = img_lr.float()
-        loss, _, _, loss_space, loss_amp = self.loss_fn(
+        train_CRPS, _, _ = self.loss_fn(
                             net=self,
                             img_clean=img_clean,
                             img_lr=img_lr,
@@ -131,21 +139,19 @@ class UNetWrapper(pl.LightningModule):
                         )
         
         log_dict = {
-            "train_loss": loss,
-            "train_loss_mse": loss_space,
-            "train_loss_psd": loss_amp,
+            "train_CRPS": train_CRPS,
         }
         self.log_dict(
             log_dict, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True
         )
-        return loss
+        return train_CRPS
 
     def validation_step(self, batch, *args):
         batch_size = batch[0].shape[0]
         img_clean, img_lr = batch
         img_clean = img_clean.float()
         img_lr = img_lr.float()
-        val_loss, ground_truth, predictions, loss_space, loss_amp = self.loss_fn(
+        val_CRPS, ground_truth, ensemble = self.loss_fn(
                                                 net=self,
                                                 img_clean=img_clean,
                                                 img_lr=img_lr,
@@ -154,15 +160,15 @@ class UNetWrapper(pl.LightningModule):
         
         # Log loss per time step forward and mean
         val_log_dict = {
-            "val_loss": val_loss,
-            "val_loss_mse": loss_space,
-            "val_loss_psd": loss_amp,
+            "val_CRPS": val_CRPS,
         }
         self.log_dict(
             val_log_dict, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True
         )
         
         batch_idx = args[0]
+        
+        predictions = ensemble.mean(dim=1)
         
         # Plot some example predictions using prior and encoder
         if (
@@ -192,11 +198,10 @@ class UNetWrapper(pl.LightningModule):
 
         # (1) Get raw predictions & ground_truth from your loss_fn
         #     They are assumed to be in normalized space: shape (B, C, H, W)
-        _, ground_truth, predictions, _, _ = self.loss_fn(
+        _, ground_truth, predictions = self.loss_fn(
             net=self,
             img_clean=img_clean,
-            img_lr=img_lr,
-            current_epoch=self.current_epoch
+            img_lr=img_lr
         )
 
         # (2) Un‐normalize both `predictions` and `ground_truth` at once,
@@ -516,39 +521,10 @@ class RegressionLoss:
         y_lr = y_tot[:, img_clean.shape[1] :, :, :]
 
         zero_input = torch.zeros_like(y, device=img_clean.device)
-        D_yn = net(zero_input, y_lr, force_fp32=False, augment_labels=augment_labels)
-        # loss_mse = torch.mean((D_yn - y) ** 2)
+        ens_pred = net(zero_input, y_lr, force_fp32=False, augment_labels=augment_labels)
         
-        # ─── PSD loss ────────────────────────────────────────────────
-        # psd_pred = self.psd2d(
-        #     D_yn, dx=5.5, dy=5.5)
-        # psd_true = self.psd2d(
-        #     y,   dx=5.5, dy=5.5)
-        
-        # k, psd_pred = self.get_psd_torch(
-        #     D_yn.permute(0, 2, 3, 1), dx=5.5, dim=2)
-        # _, psd_true = self.get_psd_torch(
-        #     y.permute(0, 2, 3, 1),   dx=5.5, dim=2)
-        
-        # freq_weights = (k / k.max()).pow(2)  # shape: (F,)
-        # w = freq_weights.view(1, 1, -1, 1)  
-
-        # RMSE between log-PSDs (scalar)
-        # diff_log_psd = torch.log(psd_pred + self.eps) - torch.log(psd_true + self.eps)
-        # psd_loss = torch.sqrt(torch.mean(w * diff_log_psd ** 2))
-        # psd_loss = torch.sqrt(torch.mean(diff_log_psd ** 2))
-        
-        if self.loss_func is not None:
-            term_space, term_amp = self.loss_func(D_yn, y)
-            lambda_psd = min(self.init_lambda + (self.max_lambda - self.init_lambda) * (current_epoch / self.anneal_epochs)**2, self.max_lambda)
-            loss_amp = lambda_psd * term_amp
-            loss_space = term_space
-            loss = loss_space + loss_amp
-        else:
-            loss = torch.mean((D_yn - y) ** 2)
-            loss_space = loss #MSE
-            loss_amp = torch.tensor(0.0, device=D_yn.device) #just zero
+        crps = self.loss_func(ens_pred, y)
             
 
-        return loss, y, D_yn, loss_space, loss_amp #, lambda_psd, lambda_psd * psd_loss
+        return crps, y, ens_pred
     

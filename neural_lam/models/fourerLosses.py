@@ -69,61 +69,33 @@ class FourierLossETH(nn.Module):  # nn.Module
     
 
 class FourierLossDelft(nn.Module):
-    def __init__(self, reduction='mean', **kwargs):
-        super(FourierLossDelft, self).__init__()
-        self.reduction = reduction
+    def __init__(self):
+        super().__init__()
 
-    def forward(self, sr, hr):
-        sr_w, hr_w = self.addWindows(sr, hr)
-        sr_F = self.comFourier(sr_w)
-        hr_F = self.comFourier(hr_w)
-        amp_loss = self.get_log_amplitude_loss(sr_F, hr_F)
-        phase_loss = self.get_phase_cosine_loss(sr_F, hr_F)
-        return phase_loss, amp_loss
-
-    def comFourier(self, image):
-        # returns complex-valued FFT output
-        return fft.fftshift(fft.fftn(image, dim=(2, 3)), dim=(2, 3))
-
-    def addWindows(self, sr, hr):
-        b, c, h, w = sr.size()
-        win1 = torch.hann_window(h, device=sr.device).reshape(h, 1)
-        win2 = torch.hann_window(w, device=sr.device).reshape(1, w)
-        win = torch.mm(win1, win2)  # [H, W]
-        sr, hr = sr * win, hr * win
-        return sr, hr
-
-    def get_phase_cosine_loss(self, predF, targetF):
+    def forward(self, preds, gt):
         """
-        Computes cosine similarity between unit phasors:
-        L = 1 - Re( F / |F| ⋅ conj(F̂ / |F̂|) )
+        preds: Tensor of shape [B, N, C, H, W]
+        gt:    Tensor of shape [B, C, H, W]
         """
+        B, N, C, H, W = preds.shape
 
-        # normalize to unit phasors
-        pred_norm = predF / (predF.abs())
-        target_norm = targetF / (targetF.abs())
+        # Expand gt to [B, N, C, H, W] to match preds
+        gt_exp = gt.unsqueeze(1).expand(-1, N, -1, -1, -1)
 
-        # cosine similarity: Re[ U ⋅ conj(Û) ]
-        dot = (pred_norm * target_norm.conj()).real
+        # First term: mean L2 distance to ground truth
+        diff_to_gt = torch.norm(preds - gt_exp, dim=2)  # shape [B, N, H, W]
+        term1 = diff_to_gt.mean(dim=1)  # mean over ensemble dimension → shape [B, H, W]
 
-        # restrict to positive frequencies
-        dot = dot[..., : dot.shape[-2] // 2, :]
+        # Second term: pairwise ensemble diversity penalty
+        # Compute pairwise distances between ensemble members
+        preds_ = preds.view(B, N, -1)  # flatten spatial dims
+        dists = torch.cdist(preds_, preds_, p=2)  # shape: [B, N, N]
+        term2 = dists.mean(dim=(1, 2)) / 2  # shape: [B]
 
-        # cosine distance
-        loss = (1.0 - dot).mean()
-
-        return loss
-
-    def get_log_amplitude_loss(self, predF, targetF):
-        """
-        L2 loss between log-amplitudes
-        """
-        pred_amp = predF.abs()
-        target_amp = targetF.abs()
-        diff = (pred_amp - target_amp) ** 2
-        diff = diff[..., : diff.shape[-2] // 2, :]
-        loss = diff.mean()
-        return loss
+        # Average spatially and across batch
+        term1_mean = term1.mean(dim=(1, 2))  # [B]
+        crps = term1_mean - term2  # [B]
+        return crps.mean()  # scalar loss
     
     
 class FourierLossHK(nn.Module):
@@ -293,6 +265,8 @@ class FourierLossCarlo(nn.Module):
         weights = (k_grid / k_grid.max()).pow(2)  # quadratic emphasis
 
         return weights.unsqueeze(0).unsqueeze(0)  # shape [1, 1, H, W//2+1]
+    
+    
     
     
 
