@@ -71,6 +71,7 @@ class UNetWrapper(pl.LightningModule):
         self,
         x: torch.Tensor,
         img_lr: torch.Tensor,
+        ensemble_size: int = 8,
         force_fp32: bool = False,
         **model_kwargs: dict,
     ) -> torch.Tensor:
@@ -104,27 +105,31 @@ class UNetWrapper(pl.LightningModule):
             If the model output dtype doesn't match the expected dtype.
         """
         # SR: concatenate input channels
-        batch_preds = []
+        B = x.shape[0]
+
         if img_lr is not None:
-            x = torch.cat((x, img_lr), dim=1)
-        for _ in range(16):  
-                
-            z = torch.randn(x.shape[0], 32, device=x.device)
-            z = self.noise_encoder(z)
+            x = torch.cat((x, img_lr), dim=1)  # shape: [B, C_in, H, W]
 
-            F_x = self.model(
-                x,  # (c_in * x).to(dtype),
-                torch.zeros(x.shape[0], device=x.device),  # c_noise.flatten()
-                class_labels=None,
-                z=z,
-                **model_kwargs,
-            )
+        # Repeat input for ensemble
+        x_rep = x.repeat_interleave(ensemble_size, dim=0)  # [B*N, C, H, W]
 
-            # skip connection
-            D_x = F_x.to(torch.float32)
-            batch_preds.append(D_x)
-            
-        return torch.stack(batch_preds, dim=1)
+        # Create noise vector for each ensemble member
+        z = torch.randn(B * ensemble_size, 32, device=x.device)
+        z = self.noise_encoder(z)
+
+        # Forward pass all at once
+        preds = self.model(
+            x_rep,
+            torch.zeros(B * ensemble_size, device=x.device),  # dummy noise scale
+            class_labels=None,
+            z=z,
+            **model_kwargs,
+        )  # [B*N, C, H, W]
+
+        # Reshape to [B, N, C, H, W]
+        preds = preds.view(B, ensemble_size, self.img_out_channels, x.shape[2], x.shape[3])
+
+        return preds.to(torch.float32)
 
     def training_step(self, batch, *args):
         batch_size = batch[0].shape[0]
@@ -521,7 +526,7 @@ class RegressionLoss:
         y_lr = y_tot[:, img_clean.shape[1] :, :, :]
 
         zero_input = torch.zeros_like(y, device=img_clean.device)
-        ens_pred = net(zero_input, y_lr, force_fp32=False, augment_labels=augment_labels)
+        ens_pred = net(zero_input, y_lr, ensemble_size=8, force_fp32=False, augment_labels=augment_labels)
         
         crps = self.loss_func(ens_pred, y)
             
