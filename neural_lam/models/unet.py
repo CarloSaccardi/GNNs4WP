@@ -71,7 +71,7 @@ class UNetWrapper(pl.LightningModule):
         self,
         x: torch.Tensor,
         img_lr: torch.Tensor,
-        ensemble_size: int = 8,
+        ensemble_size: int = 4,
         force_fp32: bool = False,
         **model_kwargs: dict,
     ) -> torch.Tensor:
@@ -526,7 +526,7 @@ class RegressionLoss:
         y_lr = y_tot[:, img_clean.shape[1] :, :, :]
 
         zero_input = torch.zeros_like(y, device=img_clean.device)
-        ens_pred = net(zero_input, y_lr, ensemble_size=8, force_fp32=False, augment_labels=augment_labels)
+        ens_pred = net(zero_input, y_lr, ensemble_size=4, force_fp32=False, augment_labels=augment_labels)
         
         crps = self.loss_func(ens_pred, y)
             

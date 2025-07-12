@@ -16,7 +16,7 @@ from neural_lam.weather_dataset import ERA5toCERRA2
 import os
 import yaml
 
-#os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 MODELS = {
     "UNet-CNN": UNetWrapper,
@@ -298,7 +298,7 @@ def main(args):
 
     # Instantiate model + trainer
     if torch.cuda.is_available():
-        device_name = "cuda"
+        device_name = "gpu"
         #torch.set_float32_matmul_precision(
         #    "high"
         #)  # Allows using Tensor Cores on A100s
@@ -357,12 +357,13 @@ def main(args):
         deterministic=True,
         strategy=strategy,
         accelerator=device_name,
-        #devices=devices,
+        devices=devices,
         logger=logger,
         log_every_n_steps=1,
         callbacks=callbacks,
         check_val_every_n_epoch=args.val_interval,
         precision=args.precision,
+        accumulate_grad_batches=4
         #profiler="simple",
     )
 
