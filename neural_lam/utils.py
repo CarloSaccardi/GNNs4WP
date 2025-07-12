@@ -494,14 +494,11 @@ def compute_metrics(
             g = gt[..., c]
             p = prd[..., c]
 
-            # pixel-wise errors
-            metric_sums[vname]["MAE"]  += np.abs(p - g).mean()
-            metric_sums[vname]["RMSE"] += np.sqrt(np.mean((p - g) ** 2))
-
-            # SSIM & PSNR
-            dr = g.max() - g.min()  # data_range
-            metric_sums[vname]["SSIM"] += ssim(g, p, data_range=dr) #for these metrics tesnrs should be (C, H, W) hence 
-            metric_sums[vname]["PSNR"] += psnr(g, p, data_range=dr)
+            metric_sums[vname]["MAE"]    += compute_mae(p, g)
+            metric_sums[vname]["RMSE"]   += compute_rmse(p, g)
+            metric_sums[vname]["SSIM"]   += compute_ssim_metric(p, g)
+            metric_sums[vname]["PSNR"]   += compute_psnr_metric(p, g)
+            metric_sums[vname]["Cramer"] += compute_cramer(p, g)
 
         n_files += 1
 
@@ -521,6 +518,30 @@ def compute_metrics(
             fh.write("\n")
 
     return metrics
+
+
+
+def compute_mae(p, g):
+    return np.abs(p - g).mean()
+
+def compute_rmse(p, g):
+    return np.sqrt(np.mean((p - g) ** 2))
+
+def compute_ssim_metric(p, g):
+    dr = g.max() - g.min()
+    return ssim(g, p, data_range=dr)
+
+def compute_psnr_metric(p, g):
+    dr = g.max() - g.min()
+    return psnr(g, p, data_range=dr)
+
+def compute_cramer(p, g):
+    gx = torch.from_numpy(g.flatten()).float().unsqueeze(1)
+    px = torch.from_numpy(p.flatten()).float().unsqueeze(1)
+    dxy = torch.cdist(gx, px).mean()
+    dgg = torch.cdist(gx, gx).mean()
+    dpp = torch.cdist(px, px).mean()
+    return (2 * dxy - dgg - dpp).item()
 
 
 def ensure_channels_last(arr: np.ndarray, C_expected: int) -> np.ndarray:
