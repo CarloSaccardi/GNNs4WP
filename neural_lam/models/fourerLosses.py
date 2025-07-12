@@ -78,24 +78,27 @@ class FourierLossDelft(nn.Module):
         gt:    Tensor of shape [B, C, H, W]
         """
         B, N, C, H, W = preds.shape
+        obs = gt.unsqueeze(1)                          # [B, 1, C, H, W]
 
-        # Expand gt to [B, N, C, H, W] to match preds
-        gt_exp = gt.unsqueeze(1).expand(-1, N, -1, -1, -1)
+        # Term 1: mean |f_i − x|
+        term1 = torch.abs(preds - obs).mean(dim=1)     # [B, C, H, W]
 
-        # First term: mean L2 distance to ground truth
-        diff_to_gt = torch.norm(preds - gt_exp, dim=2)  # shape [B, N, H, W]
-        term1 = diff_to_gt.mean(dim=1)  # mean over ensemble dimension → shape [B, H, W]
+        # Term 2: unbiased penalisation of ensemble spread
+        if N > 1:
+            # |f_i − f_j| for all i, j
+            pairwise = torch.abs(preds.unsqueeze(2) - preds.unsqueeze(1))  # [B, N, N, C, H, W]
 
-        # Second term: pairwise ensemble diversity penalty
-        # Compute pairwise distances between ensemble members
-        preds_ = preds.view(B, N, -1)  # flatten spatial dims
-        dists = torch.cdist(preds_, preds_, p=2)  # shape: [B, N, N]
-        term2 = dists.mean(dim=(1, 2)) / 2  # shape: [B]
+            # Remove diagonal (i = j)
+            mask = ~torch.eye(N, dtype=torch.bool, device=preds.device).view(1, N, N, 1, 1, 1)
+            pairwise = pairwise * mask
 
-        # Average spatially and across batch
-        term1_mean = term1.mean(dim=(1, 2))  # [B]
-        crps = term1_mean - term2  # [B]
-        return crps.mean()  # scalar loss
+            term2 = pairwise.sum(dim=(1, 2))           # Σ_{i≠j} |f_i − f_j|
+            term2 = term2 / (2 * N * (N - 1))          # ½ N(N−1) denominator
+        else:                                          # single-member “ensemble”
+            term2 = torch.zeros_like(term1)
+
+        crps_field = term1 - term2                     # [B, C, H, W]
+        return crps_field.mean()                       # scalar suitable for loss.backward()
     
     
 class FourierLossHK(nn.Module):

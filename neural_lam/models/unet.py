@@ -71,7 +71,7 @@ class UNetWrapper(pl.LightningModule):
         self,
         x: torch.Tensor,
         img_lr: torch.Tensor,
-        ensemble_size: int = 4,
+        ensemble_size: int = 2,
         force_fp32: bool = False,
         **model_kwargs: dict,
     ) -> torch.Tensor:
@@ -144,7 +144,7 @@ class UNetWrapper(pl.LightningModule):
                         )
         
         log_dict = {
-            "train_CRPS": train_CRPS,
+            "train_loss": train_CRPS,
         }
         self.log_dict(
             log_dict, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True
@@ -165,7 +165,7 @@ class UNetWrapper(pl.LightningModule):
         
         # Log loss per time step forward and mean
         val_log_dict = {
-            "val_CRPS": val_CRPS,
+            "val_loss": val_CRPS,
         }
         self.log_dict(
             val_log_dict, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True
@@ -526,7 +526,7 @@ class RegressionLoss:
         y_lr = y_tot[:, img_clean.shape[1] :, :, :]
 
         zero_input = torch.zeros_like(y, device=img_clean.device)
-        ens_pred = net(zero_input, y_lr, ensemble_size=4, force_fp32=False, augment_labels=augment_labels)
+        ens_pred = net(zero_input, y_lr, ensemble_size=2, force_fp32=False, augment_labels=augment_labels)
         
         crps = self.loss_func(ens_pred, y)
             
