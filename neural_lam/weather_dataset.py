@@ -164,8 +164,15 @@ class ERA5toCERRA2(torch.utils.data.Dataset):
         sample_era5 = self.upsample(sample_era5, sample_CERRA)
 
         if self.standardize:
-            sample_CERRA[:2] = (sample_CERRA[:2] - self.data_mean_CERRA[:2][:, None, None]) / self.data_std_CERRA[:2][:, None, None]
-            sample_era5 = (sample_era5 - self.data_mean_era5[[0, 1, 8, 9, 13, 14]][:, None, None]) / self.data_std_era5[[0, 1, 8, 9, 13, 14]][:, None, None]
+            # Min-max normalization for CERRA (3, H, W)
+            min_vals_cerra = sample_CERRA.amin(dim=(1,2), keepdim=True)
+            max_vals_cerra = sample_CERRA.amax(dim=(1,2), keepdim=True)
+            sample_CERRA = (sample_CERRA - min_vals_cerra) / (max_vals_cerra - min_vals_cerra + 1e-6)
+
+            # Min-max normalization for ERA5 (6, H, W)
+            min_vals_era5 = sample_era5.amin(dim=(1,2), keepdim=True)
+            max_vals_era5 = sample_era5.amax(dim=(1,2), keepdim=True)
+            sample_era5 = (sample_era5 - min_vals_era5) / (max_vals_era5 - min_vals_era5 + 1e-6)
 
         if self.split == "test":
             return sample_CERRA, sample_era5, {
