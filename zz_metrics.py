@@ -253,9 +253,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     metrics = compute_metrics(
-        "/aspire/CarloData/zz_UNETs/RESULTS/CentralEurope/Target",
-        "/aspire/CarloData/zz_UNETs/RESULTS/CentralEurope/Target",
-        "/aspire/CarloData/zz_UNETs/RESULTS/CentralEurope/Target",
+        args.path_gt,
+        args.path_pred,
+        args.save_dir,
         var_names=['u10', 'v10', 't2m', 'sshf', 'zust', "wind_speed", "vorticity"],
     )
 
