@@ -16,18 +16,11 @@
 
 import nvtx
 import torch
-import tqdm
 import os
-from physicsnemo.utils.generative import StackedRandomGenerator
-from tueplots import bundles, figsizes
 from scipy.stats import ks_2samp  
 from pprint import pprint
 
-from typing import Callable, Optional
-
 import torch
-from torch import Tensor
-from physicsnemo.utils.patching import GridPatching2D
 
 import numpy as np
 from pathlib import Path
@@ -66,8 +59,8 @@ def compute_metrics(
     C = first.shape[-1]
     if var_names is None:
         var_names = [f"var{c}" for c in range(C)]
-    if len(var_names) != C:
-        raise ValueError("Length of var_names must equal number of channels (C).")
+    # if len(var_names) != C:
+    #     raise ValueError("Length of var_names must equal number of channels (C).")
 
     # accumulators: metric_sums[var][metric] = running total
     metric_template = {
@@ -83,8 +76,6 @@ def compute_metrics(
 
     # global metrics that combine u and v (channels 0 and 1)
     global_sums: dict[str, float] = {}
-    if C >= 2:
-        global_sums = {"Wind_RMSE": 0.0, "Vorticity_RMS": 0.0}
 
     n_files = 0
 
@@ -95,11 +86,19 @@ def compute_metrics(
 
         gt  = ensure_channels_last(gt,  C)
         prd = ensure_channels_last(prd, C)
-
-        if gt.shape != prd.shape:
-            raise ValueError(f"Shape mismatch for {fname}: {gt.shape} vs {prd.shape}")
-        if gt.shape[-1] != C:
-            raise ValueError(f"Channel count changed in {fname}: got {gt.shape[-1]}, expected {C}")
+        
+        gt_wind_u = gt[..., 0]  # u-component of wind
+        gt_wind_v = gt[..., 1]
+        prd_wind_u = prd[..., 0]
+        prd_wind_v = prd[..., 1]
+        wind_speed_prd, wind_speed_gt = compute_wind_speed(prd_wind_u, prd_wind_v, gt_wind_u, gt_wind_v)
+        vorticity_prd, vorticity_gt = compute_vorticity(prd_wind_u, prd_wind_v, gt_wind_u, gt_wind_v)
+        gt = np.concatenate(
+            [gt, wind_speed_gt[..., None], vorticity_gt[..., None]], axis=-1
+        )
+        prd = np.concatenate(
+            [prd, wind_speed_prd[..., None], vorticity_prd[..., None]], axis=-1
+        )
 
         # ── per‑variable metrics ────────────────────────────────────────────
         for c, vname in enumerate(var_names):
@@ -110,17 +109,9 @@ def compute_metrics(
             metric_sums[vname]["RMSE"]   += compute_rmse(p, g)
             metric_sums[vname]["SSIM"]   += compute_ssim_metric(p, g)
             metric_sums[vname]["PSNR"]   += compute_psnr_metric(p, g)
-            metric_sums[vname]["Cramer"] += compute_cramer(p, g)
+            metric_sums[vname]["Cramer"] += 0 #compute_cramer(p, g)
             metric_sums[vname]["KS"]     += compute_ks_metric(p, g)
             metric_sums[vname]["Hill"]   += compute_hill_metric(p, g)
-
-        # ── global wind metrics (need u & v) ────────────────────────────────
-        if C >= 2:
-            u_gt, v_gt   = gt[..., 0], gt[..., 1]
-            u_prd, v_prd = prd[..., 0], prd[..., 1]
-
-            global_sums["Wind_RMSE"]     += compute_wind_rmse(u_prd, v_prd, u_gt, v_gt)
-            global_sums["Vorticity_RMS"] += compute_vorticity_rms(u_prd, v_prd, u_gt, v_gt)
 
         n_files += 1
 
@@ -164,33 +155,48 @@ def compute_psnr_metric(p: np.ndarray, g: np.ndarray) -> float:
     return float(psnr(g, p, data_range=dr))
 
 
+def _mean_pairwise_abs(sorted_v: np.ndarray) -> float:
+    n      = sorted_v.size
+    coeffs = 2 * np.arange(n) - n + 1        # 0‑based version of 2i−n−1
+    return (2.0 / n**2) * coeffs.dot(sorted_v)
+
+def _mean_cross_abs(sorted_x: np.ndarray, sorted_y: np.ndarray) -> float:
+    n, m   = sorted_x.size, sorted_y.size
+    cumsum = np.concatenate(([0.0], np.cumsum(sorted_y)))
+    idx    = np.searchsorted(sorted_y, sorted_x, side="left")
+
+    left  = sorted_x * idx             - cumsum[idx]
+    right = (cumsum[-1] - cumsum[idx]) - sorted_x * (m - idx)
+    return (left + right).sum() / (n * m)
+
 def compute_cramer(p: np.ndarray, g: np.ndarray) -> float:
-    gx = torch.from_numpy(g.flatten()).float().unsqueeze(1)
-    px = torch.from_numpy(p.flatten()).float().unsqueeze(1)
-    dxy = torch.cdist(gx, px).mean()
-    dgg = torch.cdist(gx, gx).mean()
-    dpp = torch.cdist(px, px).mean()
-    return (2 * dxy - dgg - dpp).item()
+    p_sorted = np.sort(p.ravel())
+    g_sorted = np.sort(g.ravel())
+
+    dxy = _mean_cross_abs(g_sorted, p_sorted)
+    dgg = _mean_pairwise_abs(g_sorted)
+    dpp = _mean_pairwise_abs(p_sorted)
+    return 2.0 * dxy - dgg - dpp
 
 
 # ───────────────────── physics‑oriented helpers ──────────────────────────────
-def compute_wind_rmse(u_p: np.ndarray, v_p: np.ndarray,
+def compute_wind_speed(u_p: np.ndarray, v_p: np.ndarray,
                       u_g: np.ndarray, v_g: np.ndarray) -> float:
     """RMSE of wind‑speed magnitude."""
     speed_p = np.hypot(u_p, v_p)
     speed_g = np.hypot(u_g, v_g)
-    return np.sqrt(np.mean((speed_p - speed_g) ** 2))
+    return speed_p, speed_g
 
 
-def compute_vorticity_rms(u_p: np.ndarray, v_p: np.ndarray,
+def compute_vorticity(u_p: np.ndarray, v_p: np.ndarray,
                            u_g: np.ndarray, v_g: np.ndarray,
-                           dx: float = 1.0, dy: float = 1.0) -> float:
+                           dx: float = 5500.0, dy: float = 5500.0) -> float:
     """
     RMS of vorticity error ζ = ∂v/∂x − ∂u/∂y using centred finite differences.
     """
     ζ_p = np.gradient(v_p, dx, axis=1) - np.gradient(u_p, dy, axis=0)
     ζ_g = np.gradient(v_g, dx, axis=1) - np.gradient(u_g, dy, axis=0)
-    return np.sqrt(np.mean((ζ_p - ζ_g) ** 2))
+    return ζ_g, ζ_p
 
 
 def compute_ks_metric(p: np.ndarray, g: np.ndarray) -> float:
@@ -234,9 +240,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Compute metrics for two folders of (H,W,C) .npy files."
     )
-    parser.add_argument("--path_gt",   required=True, help="Directory with ground‑truth .npy files")
-    parser.add_argument("--path_pred", required=True, help="Directory with prediction  .npy files")
-    parser.add_argument("--save_dir",  required=True, help="Where metrics_new.txt will be written")
+    parser.add_argument("--path_gt", help="Directory with ground‑truth .npy files")
+    parser.add_argument("--path_pred", help="Directory with prediction  .npy files")
+    parser.add_argument("--save_dir", help="Where metrics_new.txt will be written")
     parser.add_argument(
         "--var_names",
         nargs="*",
@@ -247,10 +253,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     metrics = compute_metrics(
-        Path(args.path_gt).expanduser(),
-        Path(args.path_pred).expanduser(),
-        Path(args.save_dir).expanduser(),
-        var_names=['u10', 'v10', 't2m', 'sshf', 'zust'],
+        "/aspire/CarloData/zz_UNETs/RESULTS/CentralEurope/Target",
+        "/aspire/CarloData/zz_UNETs/RESULTS/CentralEurope/Target",
+        "/aspire/CarloData/zz_UNETs/RESULTS/CentralEurope/Target",
+        var_names=['u10', 'v10', 't2m', 'sshf', 'zust', "wind_speed", "vorticity"],
     )
 
     pprint(metrics)
