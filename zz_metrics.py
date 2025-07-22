@@ -190,7 +190,7 @@ def compute_wind_speed(u_p: np.ndarray, v_p: np.ndarray,
 
 def compute_vorticity(u_p: np.ndarray, v_p: np.ndarray,
                            u_g: np.ndarray, v_g: np.ndarray,
-                           dx: float = 5500.0, dy: float = 5500.0) -> float:
+                           dx: float = 1.0, dy: float = 1.0) -> float:
     """
     RMS of vorticity error ζ = ∂v/∂x − ∂u/∂y using centred finite differences.
     """
@@ -279,11 +279,11 @@ def mass_conservartion(pressure_files_path, var_files_path):
     # 5.  Scalar error metrics --------------------------------------------
     #     “0 ≈ …”  →  we measure how *far* from zero we are.
     # ---------------------------------------------------------------------
-    summation = div.sum(axis=(1,2))               # |∇·(ρu,ρv)|   kg m‑3 s‑1
-    MAE = np.mean(np.abs(summation))            # mean absolute error
+    # summation = div.sum(axis=(1,2))               # |∇·(ρu,ρv)|   kg m‑3 s‑1
+    # MAE = np.mean(np.abs(summation))            # mean absolute error
 
-    print(f"Mean |∇·(ρu,ρv)|  : {MAE: .3e}  kg m⁻³ s⁻¹")
-    return MAE
+    # print(f"Mean |∇·(ρu,ρv)|  : {MAE: .3e}  kg m⁻³ s⁻¹")
+    return div
 
 
 
@@ -296,7 +296,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("--path_gt", help="Directory with ground‑truth .npy files")
     parser.add_argument("--path_pred", help="Directory with prediction  .npy files")
-    parser.add_argument("--path_pressure", help="Directory with pressure .npy files")
     parser.add_argument("--physics_metrics", type=bool, help="Compute physics metrics", default=False)
     parser.add_argument("--save_dir", help="Where metrics_new.txt will be written")
     parser.add_argument(
@@ -309,7 +308,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.physics_metrics:
-        mae = mass_conservartion(args.path_pressure, args.path_pred)
+        div_gt = mass_conservartion(args.path_pressure, args.path_gt)
+        div_pred = mass_conservartion(args.path_pressure, args.path_pred)
+        #compute RMSE of divergence
+        rmse_div = np.sqrt(np.mean((div_gt - div_pred) ** 2))
+        print(f"RMSE of divergence: {rmse_div:.6f} kg m⁻³ s⁻¹")
     else:
         metrics = compute_metrics(
             args.path_gt,
