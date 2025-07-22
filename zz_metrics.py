@@ -233,6 +233,60 @@ def ensure_channels_last(arr: np.ndarray, C_expected: int) -> np.ndarray:
     raise ValueError(f"Cannot locate channel axis in shape {arr.shape}")
 
 
+def mass_conservartion(pressure_files_path, var_files_path):
+    # ---------------------------------------------------------------------
+    # 1.  Load the data ----------------------------------------------------
+    # ---------------------------------------------------------------------
+    pressure_files = sorted(Path(pressure_files_path).glob("*.npy"))                    
+    var_files =      sorted(Path(var_files_path).glob("*.npy"))
+    p_s = np.array([np.load(f) for f in pressure_files])                # Pa     shape (N_t, H, W)
+    T   = np.array([np.load(f)[2,:,:] for f in var_files])              # K      shape (N_t, H, W)
+    u   = np.array([np.load(f)[0,:,:] for f in var_files])              # m s‑1  shape (N_t, H, W)
+    v   = np.array([np.load(f)[1,:,:] for f in var_files])              # m s‑1  shape (N_t, H, W)
+
+    Nt, H, W = T.shape                                    # (2090, 400, 400)
+
+    # ---------------------------------------------------------------------
+    # 2.  Thermodynamics: density field -----------------------------------
+    # ---------------------------------------------------------------------
+    R_d = 287.05                                          # J kg‑1 K‑1 (dry‑air gas constant)
+    rho = p_s / (R_d * T)                                 # kg m‑3, shape (N_t, H, W)
+
+    # ---------------------------------------------------------------------
+    # 3.  Mass‑fluxes through cell faces ----------------------------------
+    #      • F_x = ρ u   (zonal  , normal to left/right faces)
+    #      • F_y = ρ v   (meridional, normal to top/bottom faces)
+    # ---------------------------------------------------------------------
+    F_x = rho * u                                         # kg m‑2 s‑1
+    F_y = rho * v
+
+    # grid spacing (metres).  If you actually know Δx,Δy, replace the 1.0:
+    dx = dy = 5500.0
+
+    # ---------------------------------------------------------------------
+    # 4.  Finite‑volume divergence  ∇·(ρu,ρv) ------------------------------
+    #     Central difference with cyclic (np.roll) boundaries—good enough
+    #     for metric‑style evaluation.  If edges must be excluded, slice
+    #     away the first/last row & column after computing `div`.
+    # ---------------------------------------------------------------------
+    dFdx = (np.roll(F_x, -1, axis=2) - np.roll(F_x,  1, axis=2)) / (2*dx)
+    dFdy = (np.roll(F_y, -1, axis=1) - np.roll(F_y,  1, axis=1)) / (2*dy)
+    div  = dFdx + dFdy                                    # shape (N_t, H, W)
+    #edges must be excluded, slice away the first/last row & column
+    div = div[:, 2:-2, 2:-2]                        # shape (N_t, H-2, W-2)
+
+    # ---------------------------------------------------------------------
+    # 5.  Scalar error metrics --------------------------------------------
+    #     “0 ≈ …”  →  we measure how *far* from zero we are.
+    # ---------------------------------------------------------------------
+    summation = div.sum(axis=(1,2))               # |∇·(ρu,ρv)|   kg m‑3 s‑1
+    MAE = np.mean(np.abs(summation))            # mean absolute error
+
+    print(f"Mean |∇·(ρu,ρv)|  : {MAE: .3e}  kg m⁻³ s⁻¹")
+    return MAE
+
+
+
 # ──────────────────────────── CLI ────────────────────────────────────────────
 if __name__ == "__main__":
     import argparse
@@ -242,6 +296,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--path_gt", help="Directory with ground‑truth .npy files")
     parser.add_argument("--path_pred", help="Directory with prediction  .npy files")
+    parser.add_argument("--path_pressure", help="Directory with pressure .npy files")
+    parser.add_argument("--physics_metrics", type=bool, help="Compute physics metrics", default=False)
     parser.add_argument("--save_dir", help="Where metrics_new.txt will be written")
     parser.add_argument(
         "--var_names",
@@ -252,11 +308,14 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    metrics = compute_metrics(
-        args.path_gt,
-        args.path_pred,
-        args.save_dir,
-        var_names=['u10', 'v10', 't2m', 'sshf', 'zust', "wind_speed", "vorticity"],
-    )
+    if args.physics_metrics:
+        mae = mass_conservartion(args.path_pressure, args.path_pred)
+    else:
+        metrics = compute_metrics(
+            args.path_gt,
+            args.path_pred,
+            args.save_dir,
+            var_names=['u10', 'v10', 't2m', 'sshf', 'zust', "wind_speed", "vorticity"],
+        )
 
-    pprint(metrics)
+        pprint(metrics)
