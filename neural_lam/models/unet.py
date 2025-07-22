@@ -71,7 +71,7 @@ class UNetWrapper(pl.LightningModule):
         self,
         x: torch.Tensor,
         img_lr: torch.Tensor,
-        ensemble_size: int = 2,
+        ensemble_size: int = 128,
         force_fp32: bool = False,
         **model_kwargs: dict,
     ) -> torch.Tensor:
@@ -203,11 +203,13 @@ class UNetWrapper(pl.LightningModule):
 
         # (1) Get raw predictions & ground_truth from your loss_fn
         #     They are assumed to be in normalized space: shape (B, C, H, W)
-        _, ground_truth, predictions = self.loss_fn(
+        _, ground_truth, ensemble = self.loss_fn(
             net=self,
             img_clean=img_clean,
-            img_lr=img_lr
+            img_lr=img_lr,
+            current_epoch=self.current_epoch
         )
+        predictions = ensemble.mean(dim=1)  # shape (B, C, H, W)
 
         # (2) Un‐normalize both `predictions` and `ground_truth` at once,
         #     so that all metrics and saved files are on the original scale.
@@ -526,9 +528,9 @@ class RegressionLoss:
         y_lr = y_tot[:, img_clean.shape[1] :, :, :]
 
         zero_input = torch.zeros_like(y, device=img_clean.device)
-        ens_pred = net(zero_input, y_lr, ensemble_size=2, force_fp32=False, augment_labels=augment_labels)
+        ens_pred = net(zero_input, y_lr, ensemble_size=128, force_fp32=False, augment_labels=augment_labels)
         
-        crps = self.loss_func(ens_pred, y)
+        crps = self.loss_func(ens_pred, y) if self.loss_func is not None else 0
             
 
         return crps, y, ens_pred
