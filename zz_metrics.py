@@ -267,7 +267,7 @@ def mass_conservartion(pressure_files_path, var_files_path, gt = False):
     F_y = rho * v
 
     # grid spacing (metres).  If you actually know Δx,Δy, replace the 1.0:
-    dx = dy = 5500.0
+    dx = dy = 1.0
 
     # ---------------------------------------------------------------------
     # 4.  Finite‑volume divergence  ∇·(ρu,ρv) ------------------------------
@@ -320,13 +320,6 @@ if __name__ == "__main__":
         #compute RMSE of divergence
         rmse_div = np.sqrt(np.mean((div_gt - div_pred) ** 2))
         print(f"RMSE of divergence: {rmse_div:.6f} kg m⁻³ s⁻¹")
-        #plot the sqaured error between the two divergence fields. Mean has to be taken on samples dimension.
-        squared_error = (div_gt - div_pred) ** 2
-        mean_squared_error = np.mean(squared_error, axis=0)
-        pred_name = args.path_pred.split("/")[-2]
-        plt.imshow(mean_squared_error, cmap='hot')
-        plt.colorbar(label='Mean Squared Error')
-        plt.savefig(pred_name + "_divergence_squared_error.png")
     else:
         metrics = compute_metrics(
             args.path_gt,
@@ -336,3 +329,24 @@ if __name__ == "__main__":
         )
 
         pprint(metrics)
+        
+    if args.plot_residual:   
+        vars_gt =      sorted(Path(args.path_gt).glob("*.npy"))
+        vars_pred =    sorted(Path(args.path_pred).glob("*.npy"))
+        
+        u_gt   = np.array([np.load(f)[:,:,0] for f in vars_gt])              # m s‑1  shape (N_t, H, W)
+        v_gt   = np.array([np.load(f)[:,:,1] for f in vars_gt])              # m s‑1  shape (N_t, H, W)
+        
+        u_pred   = np.array([np.load(f)[0,:,:] for f in vars_pred])              # m s‑1  shape (N_t, H, W)
+        v_pred   = np.array([np.load(f)[1,:,:] for f in vars_pred])              # m s‑1  shape (N_t, H, W)
+        
+        wind_speed_gt = np.hypot(u_gt, v_gt)
+        wind_speed_pred = np.hypot(u_pred, v_pred)
+        
+        wind_vorticity_gt = np.gradient(v_gt, 1.0, axis=1) - np.gradient(u_gt, 1.0, axis=0)
+        wind_vorticity_pred = np.gradient(v_pred, 1.0, axis=1) - np.gradient(u_pred, 1.0, axis=0)
+        
+        
+        
+        
+        
