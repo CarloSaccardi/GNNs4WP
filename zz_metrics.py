@@ -233,16 +233,21 @@ def ensure_channels_last(arr: np.ndarray, C_expected: int) -> np.ndarray:
     raise ValueError(f"Cannot locate channel axis in shape {arr.shape}")
 
 
-def mass_conservartion(pressure_files_path, var_files_path):
+def mass_conservartion(pressure_files_path, var_files_path, gt = False):
     # ---------------------------------------------------------------------
     # 1.  Load the data ----------------------------------------------------
     # ---------------------------------------------------------------------
     pressure_files = sorted(Path(pressure_files_path).glob("*.npy"))                    
     var_files =      sorted(Path(var_files_path).glob("*.npy"))
     p_s = np.array([np.load(f) for f in pressure_files])                # Pa     shape (N_t, H, W)
-    T   = np.array([np.load(f)[2,:,:] for f in var_files])              # K      shape (N_t, H, W)
-    u   = np.array([np.load(f)[0,:,:] for f in var_files])              # m s‑1  shape (N_t, H, W)
-    v   = np.array([np.load(f)[1,:,:] for f in var_files])              # m s‑1  shape (N_t, H, W)
+    if gt:
+        T   = np.array([np.load(f)[:,:,2] for f in var_files])              # K      shape (N_t, H, W)
+        u   = np.array([np.load(f)[:,:,0] for f in var_files])              # m s‑1  shape (N_t, H, W)
+        v   = np.array([np.load(f)[:,:,1] for f in var_files])              # m s‑1  shape (N_t, H, W)
+    else:
+        T   = np.array([np.load(f)[2,:,:] for f in var_files])              # K      shape (N_t, H, W)
+        u   = np.array([np.load(f)[0,:,:] for f in var_files])              # m s‑1  shape (N_t, H, W)
+        v   = np.array([np.load(f)[1,:,:] for f in var_files])              # m s‑1  shape (N_t, H, W)
 
     Nt, H, W = T.shape                                    # (2090, 400, 400)
 
@@ -296,6 +301,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--path_gt", help="Directory with ground‑truth .npy files")
     parser.add_argument("--path_pred", help="Directory with prediction  .npy files")
+    parser.add_argument( "--path_pressure",help="Directory with pressure .npy files for physics metrics")
     parser.add_argument("--physics_metrics", type=bool, help="Compute physics metrics", default=False)
     parser.add_argument("--save_dir", help="Where metrics_new.txt will be written")
     parser.add_argument(
@@ -308,8 +314,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.physics_metrics:
-        div_gt = mass_conservartion(args.path_pressure, args.path_gt)
-        div_pred = mass_conservartion(args.path_pressure, args.path_pred)
+        div_gt = mass_conservartion(args.path_pressure, args.path_gt, gt=True)
+        div_pred = mass_conservartion(args.path_pressure, args.path_pred, gt=False)
         #compute RMSE of divergence
         rmse_div = np.sqrt(np.mean((div_gt - div_pred) ** 2))
         print(f"RMSE of divergence: {rmse_div:.6f} kg m⁻³ s⁻¹")
