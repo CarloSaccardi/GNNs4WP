@@ -291,6 +291,33 @@ def mass_conservartion(pressure_files_path, var_files_path, gt = False):
     # print(f"Mean |∇·(ρu,ρv)|  : {MAE: .3e}  kg m⁻³ s⁻¹")
     return div
 
+def imshow_with_cbar(ax, data, title, *,
+                     cmap='plasma', origin='lower',
+                     vmin=None, vmax=None, norm=None,
+                     cbar_kw=None):
+    """
+    Plot `data` into `ax` and append a narrow colour‑bar.
+
+    Parameters
+    ----------
+    ax        : matplotlib.axes.Axes
+    data      : 2‑D array‑like to be shown with imshow
+    title     : str  – panel title
+    cmap      : str or Colormap
+    origin    : imshow kw (default 'lower')
+    vmin/vmax : floats to fix limits (optional)
+    norm      : mpl.colors.Normalize instance (optional)
+    cbar_kw   : dict passed to plt.colorbar (optional)
+    """
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+    im = ax.imshow(data, cmap=cmap, origin=origin,
+                   vmin=vmin, vmax=vmax, norm=norm)
+    ax.set_title(title, fontsize=10)
+
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes('right', size='4%', pad=0.05)
+    plt.colorbar(im, cax=cax, **(cbar_kw or {}))
+    return im        # return in case you need it
 
 
 # ──────────────────────────── CLI ────────────────────────────────────────────
@@ -305,6 +332,7 @@ if __name__ == "__main__":
     parser.add_argument( "--path_pressure",help="Directory with pressure .npy files for physics metrics")
     parser.add_argument("--physics_metrics", type=bool, help="Compute physics metrics", default=False)
     parser.add_argument("--save_dir", help="Where metrics_new.txt will be written")
+    parser.add_argument("--plot_residual", type=bool, help="Plot residuals", default=False)
     parser.add_argument(
         "--var_names",
         nargs="*",
@@ -315,12 +343,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.physics_metrics:
-        div_gt = mass_conservartion(args.path_pressure, args.path_gt, gt=True)
-        div_pred = mass_conservartion(args.path_pressure, args.path_pred, gt=False)
-        #compute RMSE of divergence
-        rmse_div = np.sqrt(np.mean((div_gt - div_pred) ** 2))
-        print(f"RMSE of divergence: {rmse_div:.6f} kg m⁻³ s⁻¹")
-    else:
+    #     div_gt = mass_conservartion(args.path_pressure, args.path_gt, gt=True)
+    #     div_pred = mass_conservartion(args.path_pressure, args.path_pred, gt=False)
+    #     #compute RMSE of divergence
+    #     rmse_div = np.sqrt(np.mean((div_gt - div_pred) ** 2))
+    #     print(f"RMSE of divergence: {rmse_div:.6f} kg m⁻³ s⁻¹")
+    # else:
         metrics = compute_metrics(
             args.path_gt,
             args.path_pred,
@@ -331,6 +359,7 @@ if __name__ == "__main__":
         pprint(metrics)
         
     if args.plot_residual:   
+        model_name = args.path_pred.split("/")[-2]
         vars_gt =      sorted(Path(args.path_gt).glob("*.npy"))
         vars_pred =    sorted(Path(args.path_pred).glob("*.npy"))
         
@@ -343,8 +372,72 @@ if __name__ == "__main__":
         wind_speed_gt = np.hypot(u_gt, v_gt)
         wind_speed_pred = np.hypot(u_pred, v_pred)
         
-        wind_vorticity_gt = np.gradient(v_gt, 1.0, axis=1) - np.gradient(u_gt, 1.0, axis=0)
-        wind_vorticity_pred = np.gradient(v_pred, 1.0, axis=1) - np.gradient(u_pred, 1.0, axis=0)
+        wind_vorticity_gt = np.gradient(v_gt, 5500.0, axis=1) - np.gradient(u_gt, 5500.0, axis=0)
+        wind_vorticity_pred = np.gradient(v_pred, 5500.0, axis=1) - np.gradient(u_pred, 5500.0, axis=0)
+        
+        wind_divergence_gt = np.gradient(v_gt, 5500.0, axis=0) + np.gradient(u_gt, 5500.0, axis=1)
+        wind_divergence_pred = np.gradient(v_pred, 5500.0, axis=0) + np.gradient(u_pred, 5500.0, axis=1)
+        
+        # randomly sample 1 sample per variable and compute the error:
+        idx = np.random.randint(0, u_gt.shape[0])
+        u_gt_sample = u_gt[idx, :, :]
+        v_gt_sample = v_gt[idx, :, :]
+        u_pred_sample = u_pred[idx, :, :]
+        v_pred_sample = v_pred[idx, :, :]
+        wind_speed_gt_sample = wind_speed_gt[idx, :, :]
+        wind_speed_pred_sample = wind_speed_pred[idx, :, :]
+        wind_vorticity_gt_sample = wind_vorticity_gt[idx, :, :]
+        wind_vorticity_pred_sample = wind_vorticity_pred[idx, :, :]
+        wind_divergence_gt = wind_divergence_gt[idx, :, :]
+        wind_divergence_pred = wind_divergence_pred[idx, :, :]
+        # ------------------------------------------------------------------
+        # 1.  Ground truth vs prediction
+        # ------------------------------------------------------------------
+        fig, axs = plt.subplots(2, 5, figsize=(15, 10))
+        fig.suptitle(f'Ground Truth and Prediction: {model_name}', fontsize=14)
+
+        imshow_with_cbar(axs[0, 0], u_gt_sample,            'GT u')
+        imshow_with_cbar(axs[0, 1], v_gt_sample,            'GT v')
+        imshow_with_cbar(axs[0, 2], wind_speed_gt_sample,   'GT speed')
+        imshow_with_cbar(axs[0, 3], wind_vorticity_gt_sample, 'GT vorticity')
+        imshow_with_cbar(axs[0, 4], wind_divergence_gt,     'GT divergence')
+
+        imshow_with_cbar(axs[1, 0], u_pred_sample,          'Pred u')
+        imshow_with_cbar(axs[1, 1], v_pred_sample,          'Pred v')
+        imshow_with_cbar(axs[1, 2], wind_speed_pred_sample, 'Pred speed')
+        imshow_with_cbar(axs[1, 3], wind_vorticity_pred_sample, 'Pred vorticity')
+        imshow_with_cbar(axs[1, 4], wind_divergence_pred,   'Pred divergence')
+
+        plt.tight_layout()
+        plt.savefig(f'{model_name}_gt_pd.png', dpi=300)
+        plt.close(fig)      # tidy up
+
+        # ------------------------------------------------------------------
+        # 2.  Residuals squared
+        # ------------------------------------------------------------------
+        fig, axs = plt.subplots(2, 3, figsize=(15, 10))
+        fig.suptitle(f'Residuals Squared: {model_name}', fontsize=14)
+
+        # --- row 0 ---------------------------------------------------------
+        imshow_with_cbar(axs[0, 0], (u_gt_sample - u_pred_sample) ** 2,
+                        'u residual²')
+        imshow_with_cbar(axs[0, 1], (v_gt_sample - v_pred_sample) ** 2,
+                        'v residual²')
+        imshow_with_cbar(axs[0, 2], (wind_speed_gt_sample - wind_speed_pred_sample) ** 2,
+                        'speed residual²')
+
+        # --- row 1 ---------------------------------------------------------
+        imshow_with_cbar(axs[1, 0], (wind_speed_gt_sample - wind_speed_pred_sample) ** 2,
+                        'speed residual² (dup)')
+        imshow_with_cbar(axs[1, 1], (wind_vorticity_gt_sample - wind_vorticity_pred_sample) ** 2,
+                        'vorticity residual²')
+        imshow_with_cbar(axs[1, 2], (wind_divergence_gt - wind_divergence_pred) ** 2,
+                        'divergence residual²')
+
+        plt.tight_layout()
+        plt.savefig(f'{model_name}_residuals_squared.png', dpi=300)
+        plt.close(fig)
+
         
         
         
