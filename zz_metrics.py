@@ -26,6 +26,7 @@ import numpy as np
 from pathlib import Path
 from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import peak_signal_noise_ratio as psnr
+import matplotlib.pyplot as plt
 
 def compute_metrics(
     path_gt: str,
@@ -319,6 +320,13 @@ if __name__ == "__main__":
         #compute RMSE of divergence
         rmse_div = np.sqrt(np.mean((div_gt - div_pred) ** 2))
         print(f"RMSE of divergence: {rmse_div:.6f} kg m⁻³ s⁻¹")
+        #plot the sqaured error between the two divergence fields. Mean has to be taken on samples dimension.
+        squared_error = (div_gt - div_pred) ** 2
+        mean_squared_error = np.mean(squared_error, axis=0)
+        pred_name = args.path_pred.split("/")[-2]
+        plt.imshow(mean_squared_error, cmap='hot')
+        plt.colorbar(label='Mean Squared Error')
+        plt.savefig(pred_name + "_divergence_squared_error.png")
     else:
         metrics = compute_metrics(
             args.path_gt,
