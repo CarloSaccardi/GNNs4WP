@@ -28,22 +28,22 @@ import matplotlib.pyplot as plt
 # ──────────────────────────────────────────
 # CONFIGURATION  (edit as needed)
 # ──────────────────────────────────────────
-VARS = ['u10', 'v10', 't2m', 'sshf', 'zust', 'wind_speed']
+VARS = ['u10', 'v10', 't2m', 'vorticity', 'divergence'] #, 'sshf', 'zust', 'wind_speed']
 
 CHANNEL_MAP = {var: i for i, var in enumerate(VARS)}  # adjust if order differs
 
 CERRA_PATH = pathlib.Path(
-    "/aspire/CarloData/zz_UNETs/data/big_dataset/CERRA/samples/test"
+    "/projects/0/prjs1154/CentralEurope_2014_2020/CERRA/samples/test"
 )
 
 ERA5_PATH = pathlib.Path(
-    "/aspire/CarloData/zz_UNETs/data/big_dataset/ERA5/samples/test"
+    "/projects/0/prjs1154/CentralEurope_2014_2020/ERA5/samples/test"
 )
 
 MODEL_PATHS: Dict[str, pathlib.Path] = {
-    "SongUNetBase"     : pathlib.Path("/aspire/CarloData/zz_UNETs/data/big_dataset/preds/UNet-CNN-BigData-UNet-CNN-05_20_19-9299/files"),
+    "CorrDiff"     : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/CorrDiffusion-0-Diffusion-06_24_17-8376/files"),
     #"SongUNet01"   : pathlib.Path("/aspire/CarloData/zz_UNETs/data/big_dataset/preds/UNet-CNN-01-UNet-CNN-06_09_11-4102/files"),
-    "SongUNet001"  : pathlib.Path("/aspire/CarloData/zz_UNETs/data/big_dataset/preds/UNet-CNN-001-UNet-CNN-06_08_19-1434/files"),
+    "Regression-UNet"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/UNet-CNN-0-UNet-CNN-06_17_15-9228/files"),
     #"SongUNet0001" : pathlib.Path("/aspire/CarloData/zz_UNETs/data/big_datase/tpreds/UNet-CNN-0001-UNet-CNN-06_09_11-3299/files"),
     #"GNNUNet"      : pathlib.Path("/aspire/CarloData/zz_UNETs/data/big_dataset/preds/UNet-GNN-BigData-graph_efm-4x64-05_22_10-8678/files"),
 }
@@ -93,11 +93,15 @@ def load_stack(path: pathlib.Path) -> np.ndarray:
 
 def extract_var(stack: np.ndarray, var: str) -> np.ndarray:
     """(N, lat, lon) slice for `var`.  Wind-speed is √(u10²+v10²)."""
-    if var == 'wind_speed':
+    if var == 'vorticity':
         u = stack[..., CHANNEL_MAP['u10']]
         v = stack[..., CHANNEL_MAP['v10']]
-        return np.sqrt(u ** 2 + v ** 2)
-    return stack[..., CHANNEL_MAP[var]]
+        print(u.shape, v.shape)
+        return np.gradient(v, axis=2) - np.gradient(u, axis=1)
+    elif var == 'divergence':
+        u = stack[..., CHANNEL_MAP['u10']]
+        v = stack[..., CHANNEL_MAP['v10']]
+    return np.gradient(u, axis=2) + np.gradient(v, axis=1)
 
 # ──────────────────────────────────────────
 # PSD & PDF for one variable
