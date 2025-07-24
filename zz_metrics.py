@@ -14,8 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import nvtx
-import torch
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+import matplotlib.colors as mcolors
 import os
 from scipy.stats import ks_2samp  
 from pprint import pprint
@@ -234,22 +234,8 @@ def ensure_channels_last(arr: np.ndarray, C_expected: int) -> np.ndarray:
     raise ValueError(f"Cannot locate channel axis in shape {arr.shape}")
 
 
-def mass_conservartion(pressure_files_path, var_files_path, gt = False):
-    # ---------------------------------------------------------------------
-    # 1.  Load the data ----------------------------------------------------
-    # ---------------------------------------------------------------------
-    pressure_files = sorted(Path(pressure_files_path).glob("*.npy"))                    
-    var_files =      sorted(Path(var_files_path).glob("*.npy"))
-    p_s = np.array([np.load(f) for f in pressure_files])                # Pa     shape (N_t, H, W)
-    if gt:
-        T   = np.array([np.load(f)[:,:,2] for f in var_files])              # K      shape (N_t, H, W)
-        u   = np.array([np.load(f)[:,:,0] for f in var_files])              # m s‑1  shape (N_t, H, W)
-        v   = np.array([np.load(f)[:,:,1] for f in var_files])              # m s‑1  shape (N_t, H, W)
-    else:
-        T   = np.array([np.load(f)[2,:,:] for f in var_files])              # K      shape (N_t, H, W)
-        u   = np.array([np.load(f)[0,:,:] for f in var_files])              # m s‑1  shape (N_t, H, W)
-        v   = np.array([np.load(f)[1,:,:] for f in var_files])              # m s‑1  shape (N_t, H, W)
-
+def mass_conservartion(p_s, u, v, T):
+        
     Nt, H, W = T.shape                                    # (2090, 400, 400)
 
     # ---------------------------------------------------------------------
@@ -267,7 +253,7 @@ def mass_conservartion(pressure_files_path, var_files_path, gt = False):
     F_y = rho * v
 
     # grid spacing (metres).  If you actually know Δx,Δy, replace the 1.0:
-    dx = dy = 1.0
+    dx = dy = 5500.0
 
     # ---------------------------------------------------------------------
     # 4.  Finite‑volume divergence  ∇·(ρu,ρv) ------------------------------
@@ -291,33 +277,79 @@ def mass_conservartion(pressure_files_path, var_files_path, gt = False):
     # print(f"Mean |∇·(ρu,ρv)|  : {MAE: .3e}  kg m⁻³ s⁻¹")
     return div
 
+# ------------------------------------------------------------------
+#  Tiny helpers – unchanged
+# ------------------------------------------------------------------
 def imshow_with_cbar(ax, data, title, *,
-                     cmap='plasma', origin='lower',
+                     cmap='bwr', origin='lower',
                      vmin=None, vmax=None, norm=None,
-                     cbar_kw=None):
-    """
-    Plot `data` into `ax` and append a narrow colour‑bar.
-
-    Parameters
-    ----------
-    ax        : matplotlib.axes.Axes
-    data      : 2‑D array‑like to be shown with imshow
-    title     : str  – panel title
-    cmap      : str or Colormap
-    origin    : imshow kw (default 'lower')
-    vmin/vmax : floats to fix limits (optional)
-    norm      : mpl.colors.Normalize instance (optional)
-    cbar_kw   : dict passed to plt.colorbar (optional)
-    """
-    from mpl_toolkits.axes_grid1 import make_axes_locatable
+                     cbar_kw=None,
+                     add_cbar=False):              # ← NEW flag
     im = ax.imshow(data, cmap=cmap, origin=origin,
                    vmin=vmin, vmax=vmax, norm=norm)
     ax.set_title(title, fontsize=10)
 
-    divider = make_axes_locatable(ax)
-    cax = divider.append_axes('right', size='4%', pad=0.05)
-    plt.colorbar(im, cax=cax, **(cbar_kw or {}))
-    return im        # return in case you need it
+    if add_cbar:                                # ← only when asked
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes('right', size='3%', pad=0.1)
+        plt.colorbar(im, cax=cax, **(cbar_kw or {}))
+    return im
+
+def shared_limits(gt, pred):
+    #clip the values to the 0.1 and 99.9 percentiles
+    gt = np.clip(gt, np.percentile(gt, 0.1), np.percentile(gt, 99.9))
+    pred = np.clip(pred, np.percentile(pred, 0.1), np.percentile(pred, 99.9))
+    return float(np.min([gt, pred])), float(np.max([gt, pred]))
+
+# ------------------------------------------------------------------
+#  NEW: one‑stop routine for a single variable
+# ------------------------------------------------------------------
+def plot_triplet(var_name: str,
+                 gt2d: np.ndarray,
+                 pred2d: np.ndarray,
+                 *,
+                 residual_kind: str = "diff",  # "diff"  or "sq"
+                 out_dir: Path = Path(".")):
+    """
+    Draws a 1×3 panel [GT | Pred | Residual] for one variable and writes
+    <out_dir>/<var_name>_triplet.png.
+    """
+
+    # ---------- choose limits & norms ----------
+    vmin, vmax = shared_limits(gt2d, pred2d)
+
+    if residual_kind == "diff":
+        resid = pred2d - gt2d
+        # resid = np.abs(resid)  
+        rmax = np.percentile(resid, 99)  # 99th percentile
+        rmin = np.percentile(resid, 1)    # 1st percentile
+    else:                                  # squared residuals (always ≥0)
+        resid = (pred2d - gt2d) ** 2
+        rmin, rmax = 0, np.percentile(resid, 99)
+
+    # ---------- figure ----------
+    fig, axes = plt.subplots(1, 3, figsize=(20, 8), constrained_layout=True)
+    (ax_gt, ax_pd, ax_rs) = axes
+    
+
+    im_gt   = imshow_with_cbar(ax_gt, gt2d,  f"{var_name} • GT",
+                            cmap='bwr', vmin=vmin, vmax=vmax)
+    imshow_with_cbar(ax_pd, pred2d, f"{var_name} • Pred",
+                    cmap='bwr', vmin=vmin, vmax=vmax)
+    im_rs   = imshow_with_cbar(ax_rs, resid,  f"{var_name} • Residual",
+                            cmap='bwr', vmin=rmin, vmax=rmax) 
+
+    fig.colorbar(im_gt, ax=[ax_gt, ax_pd],        # anchors to the first two axes
+                orientation='horizontal',
+             fraction=0.05, pad=0.08)
+    fig.colorbar(im_rs, ax=ax_rs,                 # anchored to the residual axis only
+                orientation='horizontal',
+                fraction=0.05, pad=0.08)
+
+
+    fig.savefig(out_dir / f"{var_name}_triplet.png", dpi=300)
+    plt.close(fig)
+
 
 
 # ──────────────────────────── CLI ────────────────────────────────────────────
@@ -359,87 +391,70 @@ if __name__ == "__main__":
         pprint(metrics)
         
     if args.plot_residual:   
+        output_dir = Path(args.save_dir or ".") / "triplet_plots"
+        output_dir.mkdir(parents=True, exist_ok=True)
         model_name = args.path_pred.split("/")[-2]
-        vars_gt =      sorted(Path(args.path_gt).glob("*.npy"))
-        vars_pred =    sorted(Path(args.path_pred).glob("*.npy"))
         
-        u_gt   = np.array([np.load(f)[:,:,0] for f in vars_gt])              # m s‑1  shape (N_t, H, W)
-        v_gt   = np.array([np.load(f)[:,:,1] for f in vars_gt])              # m s‑1  shape (N_t, H, W)
-        
-        u_pred   = np.array([np.load(f)[0,:,:] for f in vars_pred])              # m s‑1  shape (N_t, H, W)
-        v_pred   = np.array([np.load(f)[1,:,:] for f in vars_pred])              # m s‑1  shape (N_t, H, W)
-        
-        wind_speed_gt = np.hypot(u_gt, v_gt)
-        wind_speed_pred = np.hypot(u_pred, v_pred)
-        
-        wind_vorticity_gt = np.gradient(v_gt, 5500.0, axis=1) - np.gradient(u_gt, 5500.0, axis=0)
-        wind_vorticity_pred = np.gradient(v_pred, 5500.0, axis=1) - np.gradient(u_pred, 5500.0, axis=0)
-        
-        wind_divergence_gt = np.gradient(v_gt, 5500.0, axis=0) + np.gradient(u_gt, 5500.0, axis=1)
-        wind_divergence_pred = np.gradient(v_pred, 5500.0, axis=0) + np.gradient(u_pred, 5500.0, axis=1)
-        
-        # randomly sample 1 sample per variable and compute the error:
-        idx = np.random.randint(0, u_gt.shape[0])
-        u_gt_sample = u_gt[idx, :, :]
-        v_gt_sample = v_gt[idx, :, :]
-        u_pred_sample = u_pred[idx, :, :]
-        v_pred_sample = v_pred[idx, :, :]
-        wind_speed_gt_sample = wind_speed_gt[idx, :, :]
-        wind_speed_pred_sample = wind_speed_pred[idx, :, :]
-        wind_vorticity_gt_sample = wind_vorticity_gt[idx, :, :]
-        wind_vorticity_pred_sample = wind_vorticity_pred[idx, :, :]
-        wind_divergence_gt = wind_divergence_gt[idx, :, :]
-        wind_divergence_pred = wind_divergence_pred[idx, :, :]
-        # ------------------------------------------------------------------
-        # 1.  Ground truth vs prediction
-        # ------------------------------------------------------------------
-        fig, axs = plt.subplots(2, 5, figsize=(15, 10))
-        fig.suptitle(f'Ground Truth and Prediction: {model_name}', fontsize=14)
+        path_gt, path_pred, path_press = Path(args.path_gt), Path(args.path_pred), Path(args.path_pressure)
 
-        imshow_with_cbar(axs[0, 0], u_gt_sample,            'GT u')
-        imshow_with_cbar(axs[0, 1], v_gt_sample,            'GT v')
-        imshow_with_cbar(axs[0, 2], wind_speed_gt_sample,   'GT speed')
-        imshow_with_cbar(axs[0, 3], wind_vorticity_gt_sample, 'GT vorticity')
-        imshow_with_cbar(axs[0, 4], wind_divergence_gt,     'GT divergence')
-
-        imshow_with_cbar(axs[1, 0], u_pred_sample,          'Pred u')
-        imshow_with_cbar(axs[1, 1], v_pred_sample,          'Pred v')
-        imshow_with_cbar(axs[1, 2], wind_speed_pred_sample, 'Pred speed')
-        imshow_with_cbar(axs[1, 3], wind_vorticity_pred_sample, 'Pred vorticity')
-        imshow_with_cbar(axs[1, 4], wind_divergence_pred,   'Pred divergence')
-
-        plt.tight_layout()
-        plt.savefig(f'{model_name}_gt_pd.png', dpi=300)
-        plt.close(fig)      # tidy up
-
-        # ------------------------------------------------------------------
-        # 2.  Residuals squared
-        # ------------------------------------------------------------------
-        fig, axs = plt.subplots(2, 3, figsize=(15, 10))
-        fig.suptitle(f'Residuals Squared: {model_name}', fontsize=14)
-
-        # --- row 0 ---------------------------------------------------------
-        imshow_with_cbar(axs[0, 0], (u_gt_sample - u_pred_sample) ** 2,
-                        'u residual²')
-        imshow_with_cbar(axs[0, 1], (v_gt_sample - v_pred_sample) ** 2,
-                        'v residual²')
-        imshow_with_cbar(axs[0, 2], (wind_speed_gt_sample - wind_speed_pred_sample) ** 2,
-                        'speed residual²')
-
-        # --- row 1 ---------------------------------------------------------
-        imshow_with_cbar(axs[1, 0], (wind_speed_gt_sample - wind_speed_pred_sample) ** 2,
-                        'speed residual² (dup)')
-        imshow_with_cbar(axs[1, 1], (wind_vorticity_gt_sample - wind_vorticity_pred_sample) ** 2,
-                        'vorticity residual²')
-        imshow_with_cbar(axs[1, 2], (wind_divergence_gt - wind_divergence_pred) ** 2,
-                        'divergence residual²')
-
-        plt.tight_layout()
-        plt.savefig(f'{model_name}_residuals_squared.png', dpi=300)
-        plt.close(fig)
-
+        gt_files   = {f.name: f for f in path_gt.glob("*.npy")}
+        pred_files = {f.name: f for f in path_pred.glob("*.npy")}
+        press_files = {f.name: f for f in path_press.glob("*.npy")}
+        common     = sorted(gt_files.keys() & pred_files.keys() & press_files.keys())
         
+        u_gt   = np.array([np.load(gt_files[f])[:, :, 0] for f in common])   # (N, H, W) --> (t, y, x)
+        v_gt   = np.array([np.load(gt_files[f])[:, :, 1] for f in common])
+        T_gt   = np.array([np.load(gt_files[f])[:, :, 2] for f in common])
+
+        u_pred = np.array([np.load(pred_files[f])[0, :, :] for f in common]) # (N, H, W)
+        v_pred = np.array([np.load(pred_files[f])[1, :, :] for f in common])
+        T_pred = np.array([np.load(pred_files[f])[2, :, :] for f in common])
         
+        p_s = np.array([np.load(press_files[f]) for f in common])
         
+        mass_conservartion_gt = mass_conservartion(p_s, u_gt, v_gt, T_gt)
+        mass_conservartion_pred = mass_conservartion(p_s, u_pred, v_pred, T_pred)
         
+        # wind_speed_gt = np.hypot(u_gt, v_gt)
+        # wind_speed_pred = np.hypot(u_pred, v_pred)
         
+        wind_vorticity_gt = np.gradient(v_gt, 5500.0, axis=2) - np.gradient(u_gt, 5500.0, axis=1)
+        wind_vorticity_pred = np.gradient(v_pred, 5500.0, axis=2) - np.gradient(u_pred, 5500.0, axis=1)
+        
+        wind_divergence_gt = np.gradient(v_gt, 5500.0, axis=1) + np.gradient(u_gt, 5500.0, axis=2)
+        wind_divergence_pred = np.gradient(v_pred, 5500.0, axis=1) + np.gradient(u_pred, 5500.0, axis=2)
+        
+        u_gt_mean   = u_gt.mean(axis=0)
+        v_gt_mean   = v_gt.mean(axis=0)
+        u_pred_mean = u_pred.mean(axis=0)
+        v_pred_mean = v_pred.mean(axis=0)
+
+        # wind_speed_gt_mean      = wind_speed_gt.mean(axis=0)
+        # wind_speed_pred_mean    = wind_speed_pred.mean(axis=0)
+        
+        mass_conservartion_gt_mean = mass_conservartion_gt.mean(axis=0)
+        mass_conservartion_pred_mean = mass_conservartion_pred.mean(axis=0)
+
+        wind_vorticity_gt_mean  = wind_vorticity_gt.mean(axis=0)
+        wind_vorticity_pred_mean= wind_vorticity_pred.mean(axis=0)
+
+        wind_divergence_gt_mean = wind_divergence_gt.mean(axis=0)
+        wind_divergence_pred_mean = wind_divergence_pred.mean(axis=0)
+
+        triplets = [
+            # ("u",          u_gt_mean,           u_pred_mean),
+            # ("v",          v_gt_mean,           v_pred_mean),
+            # ("speed",      wind_speed_gt_mean,  wind_speed_pred_mean),
+            ("cons_mass", mass_conservartion_gt_mean, mass_conservartion_pred_mean),
+            ("vorticity",  wind_vorticity_gt_mean, wind_vorticity_pred_mean),
+            ("divergence", wind_divergence_gt_mean, wind_divergence_pred_mean),
+        ]
+
+        for name, gt2d, pred2d in triplets:
+            output_dir_model = Path(output_dir) / model_name
+            output_dir_model.mkdir(parents=True, exist_ok=True)
+            prefixed_name = f"{name}"              # ⇐ add prefix
+            plot_triplet(prefixed_name, gt2d, pred2d,
+                        residual_kind="diff",
+                        out_dir=output_dir_model)
+        print(f"✓ wrote one PNG per variable in {output_dir_model}")
