@@ -28,7 +28,7 @@ import matplotlib.pyplot as plt
 # ──────────────────────────────────────────
 # CONFIGURATION  (edit as needed)
 # ──────────────────────────────────────────
-VARS = ['u10', 'v10', 't2m', 'vorticity', 'divergence'] #, 'sshf', 'zust', 'wind_speed']
+VARS = ['k-energy''u10', 'v10']#, 't2m', 'vorticity', 'divergence'] #, 'sshf', 'zust', 'wind_speed']
 
 CHANNEL_MAP = {var: i for i, var in enumerate(VARS)}  # adjust if order differs
 
@@ -96,12 +96,17 @@ def extract_var(stack: np.ndarray, var: str) -> np.ndarray:
     if var == 'vorticity':
         u = stack[..., CHANNEL_MAP['u10']]
         v = stack[..., CHANNEL_MAP['v10']]
-        print(u.shape, v.shape)
+        print(u,)
         return np.gradient(v, axis=2) - np.gradient(u, axis=1)
     elif var == 'divergence':
         u = stack[..., CHANNEL_MAP['u10']]
         v = stack[..., CHANNEL_MAP['v10']]
-    return np.gradient(u, axis=2) + np.gradient(v, axis=1)
+        return np.gradient(u, axis=2) + np.gradient(v, axis=1)
+    elif var == 'k-energy':
+        u = stack[..., CHANNEL_MAP['u10']]
+        v = stack[..., CHANNEL_MAP['v10']]
+        return 0.5 * (u**2 + v**2)
+    return stack[..., CHANNEL_MAP[var]]
 
 # ──────────────────────────────────────────
 # PSD & PDF for one variable
