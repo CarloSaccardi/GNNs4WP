@@ -206,7 +206,8 @@ class UNetWrapper(pl.LightningModule):
         _, ground_truth, predictions = self.loss_fn(
             net=self,
             img_clean=img_clean,
-            img_lr=img_lr
+            img_lr=img_lr,
+            current_epoch=self.current_epoch
         )
 
         # (2) Un‐normalize both `predictions` and `ground_truth` at once,
