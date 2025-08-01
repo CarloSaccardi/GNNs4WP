@@ -13,7 +13,7 @@ import numpy as np
 from scipy.fft import fft
 import math
 
-from neural_lam.models.fourerLosses import FourierLossETH, FourierLossDelft, FourierLossHK, FourierLossCarlo
+from neural_lam.models.fourerLosses import FourierLossETH, CRPSloss, FourierLossHK, FourierLossCarlo
 
 network_module = importlib.import_module("physicsnemo.models.diffusion")
 
@@ -58,7 +58,6 @@ class UNetWrapper(pl.LightningModule):
         
         loss_ditc = {
             "FourierLossETH": FourierLossETH,
-            "FourierLossDelft": FourierLossDelft,
             "FourierLossHK": FourierLossHK,
             "FourierLossCarlo": FourierLossCarlo
         }
@@ -432,6 +431,7 @@ class RegressionLoss:
         self.anneal_epochs = anneal_epochs
         self.loss_func = loss_func
         self.eps = eps                         # to avoid log(0)
+        self.loss_crps = CRPSloss() 
         
     
     # @staticmethod
@@ -529,8 +529,18 @@ class RegressionLoss:
         zero_input = torch.zeros_like(y, device=img_clean.device)
         ens_pred = net(zero_input, y_lr, ensemble_size=2, force_fp32=False, augment_labels=augment_labels)
         
-        crps = self.loss_func(ens_pred, y)
+        crps = self.loss_crps(ens_pred, y)
+        #mean(dim=1)
+        if self.loss_func is not None:
+            ens_pred_mean = ens_pred.mean(dim=1) # (B, C_hr, H, W)
+            _, loss_psd = self.loss_func(ens_pred_mean, y)
+            crps_psd = crps + self.max_lambda * loss_psd
+            return crps_psd, y, ens_pred
+            
+        else:
+            return crps, y, ens_pred
+        
+        
             
 
-        return crps, y, ens_pred
     

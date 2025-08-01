@@ -68,7 +68,7 @@ class FourierLossETH(nn.Module):  # nn.Module
         return loss
     
 
-class FourierLossDelft(nn.Module):
+class CRPSloss(nn.Module):
     def __init__(self):
         super().__init__()
 
@@ -220,7 +220,10 @@ class FourierLossCarlo(nn.Module):
         
 
     def forward(self, sr, hr):
-        
+        """
+        sr : Tensor of shape [B, C, H, W] (super-resolved image)
+        hr : Tensor of shape [B, C, H, W] (high-resolution ground truth)
+        """
         
         sr_psd = self.getpsd(sr)
         hr_psd = self.getpsd(hr)
@@ -278,7 +281,7 @@ if __name__ == '__main__':
     sr_tensor = torch.rand([4, 5, 368, 368])
     hr_tensor = torch.rand([4, 5, 368, 368])
     F_ETH = FourierLossETH()
-    F_Delft = FourierLossDelft()
+    F_Delft = CRPSloss()
     F_HK = FourierLossHK()
     F_Carlo = FourierLossCarlo()
     phase_loss_ETH, amp_loss_ETH = F_ETH(sr_tensor, hr_tensor)
