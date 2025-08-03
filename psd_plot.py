@@ -42,11 +42,9 @@ ERA5_PATH = pathlib.Path(
 
 MODEL_PATHS: Dict[str, pathlib.Path] = {
     "Full-CorrDiff"     : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/CorrDiffusion-0-Diffusion-06_24_17-8376/files"),
-    #"SongUNet01"   : pathlib.Path("/aspire/CarloData/zz_UNETs/data/big_dataset/preds/UNet-CNN-01-UNet-CNN-06_09_11-4102/files"),
     "Regression-CorrDiff"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/UNet-CNN-0-UNet-CNN-06_17_15-9228/files"),
-    #"SongUNet0001" : pathlib.Path("/aspire/CarloData/zz_UNETs/data/big_datase/tpreds/UNet-CNN-0001-UNet-CNN-06_09_11-3299/files"),
-    #"GNNUNet"      : pathlib.Path("/aspire/CarloData/zz_UNETs/data/big_dataset/preds/UNet-GNN-BigData-graph_efm-4x64-05_22_10-8678/files"),
-    "CRPS-UNets"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/CRPSresume-UNet-CNN-07_14_10-5016/files"),
+    "CRPS-UNets"            : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/CRPSresume2-UNet-CNN-08_01_14-3691/files"),
+    # "CRPS-UNets"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/CRPSresume-UNet-CNN-07_14_10-5016/files"),
 }
 
 ERA5_DX_DEG = 25                       # longitude spacing of reference grid
