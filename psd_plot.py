@@ -58,8 +58,8 @@ MODEL_PATHS: Dict[str, pathlib.Path] = {
     # "Regression-CorrDiff-Delf"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/UNet-CNN-Delft-UNet-CNN-07_10_00-3910/files"),
     "Regression-CorrDiff-PSD"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/UNet-CNN-Delft-weighted-UNet-CNN-07_10_00-9378/files"),
     # "Regression-CorrDiff-continue"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/UNet-CNN-flexContinue-UNet-CNN-07_02_11-0248/files"),
-    # "CRPS-UNets"            : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/CRPSresume2-UNet-CNN-08_01_14-3691/files"),
-    # "CRPS-UNets-PSD"            : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/CRPSresume2-UNet-CNN-08_01_14-3691/files"),
+    "CRPS-UNets"            : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/CRPSresume2-UNet-CNN-08_01_14-3691/files"),
+    "CRPS-UNets-PSD"            : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/CRPSwLoss-resum-UNet-CNN-08_04_20-5589/files"),
     # "CRPS-UNets"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/CRPSresume-UNet-CNN-07_14_10-5016/files"),
     #saved_models/UNet-CNN-Delft-UNet-CNN-07_10_00-3910
 }
