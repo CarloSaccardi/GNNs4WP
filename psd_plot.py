@@ -28,6 +28,17 @@ import matplotlib.pyplot as plt
 # ──────────────────────────────────────────
 # CONFIGURATION  (edit as needed)
 # ──────────────────────────────────────────
+
+COLOR_MAP = {
+    "Full-CorrDiff": "#e41a1c",         # red
+    "Full-CorrDiff-PSD": "#ff7f00",     # orange
+    "Regression-CorrDiff": "#4daf4a",   # green
+    "Regression-CorrDiff-PSD": "#a6d854",  # light green
+    "CRPS-UNets": "#377eb8",            # blue
+    "CRPS-UNets-PSD": "#9ecae1",        # light blue
+}
+
+
 VARS = ['u10', 'v10', 't2m', 'vorticity', 'divergence', 'k-energy'] #, 'sshf', 'zust', 'wind_speed']
 
 CHANNEL_MAP = {var: i for i, var in enumerate(VARS)}  # adjust if order differs
@@ -42,9 +53,15 @@ ERA5_PATH = pathlib.Path(
 
 MODEL_PATHS: Dict[str, pathlib.Path] = {
     "Full-CorrDiff"     : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/CorrDiffusion-0-Diffusion-06_24_17-8376/files"),
+    # "Full-CorrDiff-PSD"     : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/CorrDiffusion-001-Diffusion-06_24_17-3916/files"),
     "Regression-CorrDiff"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/UNet-CNN-0-UNet-CNN-06_17_15-9228/files"),
-    "CRPS-UNets"            : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/CRPSresume2-UNet-CNN-08_01_14-3691/files"),
+    # "Regression-CorrDiff-Delf"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/UNet-CNN-Delft-UNet-CNN-07_10_00-3910/files"),
+    "Regression-CorrDiff-PSD"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/UNet-CNN-Delft-weighted-UNet-CNN-07_10_00-9378/files"),
+    # "Regression-CorrDiff-continue"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/UNet-CNN-flexContinue-UNet-CNN-07_02_11-0248/files"),
+    # "CRPS-UNets"            : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/CRPSresume2-UNet-CNN-08_01_14-3691/files"),
+    # "CRPS-UNets-PSD"            : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/CRPSresume2-UNet-CNN-08_01_14-3691/files"),
     # "CRPS-UNets"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/CRPSresume-UNet-CNN-07_14_10-5016/files"),
+    #saved_models/UNet-CNN-Delft-UNet-CNN-07_10_00-3910
 }
 
 ERA5_DX_DEG = 25                       # longitude spacing of reference grid
@@ -95,7 +112,7 @@ def extract_var(stack: np.ndarray, var: str) -> np.ndarray:
     if var == 'vorticity':
         u = stack[..., CHANNEL_MAP['u10']]
         v = stack[..., CHANNEL_MAP['v10']]
-        print(u,)
+        # print(u,)
         return np.gradient(v, axis=2) - np.gradient(u, axis=1)
     elif var == 'divergence':
         u = stack[..., CHANNEL_MAP['u10']]
@@ -155,13 +172,25 @@ def main() -> None:
 
         plt.figure(figsize=(7, 5))
         plt.loglog(k_ref, psd_ref, lw=3, c="k", label="CERRA")
+
         for name, k_m in k_models.items():
-            plt.loglog(k_m, psd_models[name], label=name)
-        plt.xlabel(r"Wavenumber $k$ (cycles deg$^{-1}$)")
-        plt.ylabel("PSD")
-        plt.title(f"PSD of {var} (longitude)")
-        plt.legend()
+            psd_m = psd_models[name]
+            # Determine line style based on "PSD" in model name
+            linestyle = '-' if 'PSD' in name else '--'
+            color = COLOR_MAP.get(name, None)  # fallback to default if not defined
+            plt.loglog(k_m, psd_m, label=name, linestyle=linestyle, linewidth=2, color=color)
+
+        plt.xlabel(r"Wavenumber $k$ (cycles deg$^{-1}$)", fontsize=14, weight='bold')
+        plt.ylabel(r"PSD", fontsize=14, weight='bold')
+        plt.title(f"PSD of {var} (longitude)", fontsize=14, weight='bold')
+
+        legend = plt.legend(fontsize=12)
+        for text in legend.get_texts():
+            text.set_fontweight('bold')
+
+        plt.tick_params(axis='both', which='major', labelsize=12)
         plt.tight_layout()
+
         out_psd = OUT_DIR / f"{var}_psd.png"
         plt.savefig(out_psd, dpi=200)
         plt.close()
