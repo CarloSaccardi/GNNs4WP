@@ -281,13 +281,13 @@ def mass_conservartion(p_s, u, v, T):
 #  Tiny helpers – unchanged
 # ------------------------------------------------------------------
 def imshow_with_cbar(ax, data, title, *,
-                     cmap='bwr', origin='lower',
+                     cmap='plasma', origin='lower',
                      vmin=None, vmax=None, norm=None,
                      cbar_kw=None,
                      add_cbar=False):              # ← NEW flag
     im = ax.imshow(data, cmap=cmap, origin=origin,
                    vmin=vmin, vmax=vmax, norm=norm)
-    ax.set_title(title, fontsize=10)
+    ax.set_title(title, fontsize=18)
 
     if add_cbar:                                # ← only when asked
         divider = make_axes_locatable(ax)
@@ -349,6 +349,52 @@ def plot_triplet(var_name: str,
 
     fig.savefig(out_dir / f"{var_name}_triplet.png", dpi=300)
     plt.close(fig)
+    
+    
+    
+
+def plot_residual_grid(
+        var_name: str,
+        resid: dict[str, np.ndarray],          # {model_name -> residual array}
+        *,
+        out_dir: Path = Path(".")
+):
+
+    if len(resid) != 6:
+        raise ValueError("resid must contain exactly six residual arrays")
+
+    # ---------- common limits ----------
+    rflat = np.concatenate([r.ravel() for r in resid.values()])
+    rmin, rmax = np.percentile(rflat, (1, 99))      # 1st … 99th percentile
+
+    # ---------- figure ----------
+    fig, axes = plt.subplots(2, 3, figsize=(24, 12), constrained_layout=True)
+
+    ims = []
+    for ax, (model_name, data) in zip(axes.flat, resid.items()):
+        
+        ax.set_axis_off()
+        
+        im = imshow_with_cbar(
+            ax, data,
+            f"Residual {model_name}",
+            cmap="plasma", vmin=rmin, vmax=rmax,
+            add_cbar=False           # ← no per-axis bars
+        )
+        ims.append(im)
+
+    # one shared colour-bar for *all* six residuals
+    fig.colorbar(
+        ims[0], ax=axes,
+        orientation="horizontal",
+        fraction=0.05, pad=0.08
+    )
+
+    out_path = out_dir / f"{var_name}_residual_grid.png"
+    fig.savefig(out_path, dpi=300)
+    plt.close(fig)
+    return out_path
+
 
 
 
@@ -359,12 +405,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Compute metrics for two folders of (H,W,C) .npy files."
     )
-    parser.add_argument("--path_gt", help="Directory with ground‑truth .npy files")
-    parser.add_argument("--path_pred", help="Directory with prediction  .npy files")
-    parser.add_argument( "--path_pressure",help="Directory with pressure .npy files for physics metrics")
     parser.add_argument("--physics_metrics", type=bool, help="Compute physics metrics", default=False)
+    parser.add_argument("--path_gt", help="Directory with ground‑truth .npy files")
     parser.add_argument("--save_dir", help="Where metrics_new.txt will be written")
-    parser.add_argument("--plot_residual", type=bool, help="Plot residuals", default=False)
+    #################################################################################################################################
+    parser.add_argument("--path_gt_iberia", help="Directory with ground‑truth iberia .npy files")
+    parser.add_argument("--path_gt_CE", help="Directory with ground‑truth CE .npy files")
+    parser.add_argument("--path_preds", nargs="+", type=Path, help="One or more directories with prediction .npy files")
+    parser.add_argument("--plot_residuals", type=bool, help="Plot residuals", default=False)
     parser.add_argument(
         "--var_names",
         nargs="*",
@@ -373,6 +421,74 @@ if __name__ == "__main__":
               "e.g. --var_names u10 v10 t2m sshf zust"),
     )
     args = parser.parse_args()
+        
+    if args.plot_residuals:   
+        
+        
+        output_dir = Path(args.save_dir or ".")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        model_var_residuals = {}
+
+        for path_pred in args.path_preds:            # loop over models
+            path_pred  = Path(path_pred)
+            model = path_pred.parent.name            # unchanged
+            region = path_pred.parts[3]
+            model_name = f"{model}-{region}"  
+                      
+            path_gt   = Path(args.path_gt_iberia) if "beria" in model_name else Path(args.path_gt_CE)     
+            gt_files  = sorted(path_gt.glob("*.npy"))         #
+            gt_stack  = np.stack([np.load(f) for f in gt_files], axis=0)
+            u_gt, v_gt, T_gt = gt_stack[..., 0], gt_stack[..., 1], gt_stack[..., 2]
+
+            # only filenames that exist in BOTH dirs
+            pred_files = {f.name: f for f in path_pred.glob("*.npy")}
+            common     = [f.name for f in gt_files if f.name in pred_files]
+
+            # ---------- predictions: each file read ONCE ----------
+            # (N, 3, H, W)  →  same order you saved them in
+            pred_stack = np.stack([np.load(pred_files[n]) for n in common], axis=0)
+
+            u_pred, v_pred, T_pred = pred_stack[:, 0], pred_stack[:, 1], pred_stack[:, 2]
+        
+            kinetic_energy_gt = 0.5 * (u_gt**2 + v_gt**2) 
+            kinetic_energy_pred = 0.5 * (u_pred**2 + v_pred**2)
+            
+            wind_vorticity_gt = np.gradient(v_gt, 5500.0, axis=2) - np.gradient(u_gt, 5500.0, axis=1)
+            wind_vorticity_pred = np.gradient(v_pred, 5500.0, axis=2) - np.gradient(u_pred, 5500.0, axis=1)
+            
+            wind_divergence_gt = np.gradient(v_gt, 5500.0, axis=1) + np.gradient(u_gt, 5500.0, axis=2)
+            wind_divergence_pred = np.gradient(v_pred, 5500.0, axis=1) + np.gradient(u_pred, 5500.0, axis=2)
+            
+            u_gt_mean   = u_gt.mean(axis=0)
+            v_gt_mean   = v_gt.mean(axis=0)
+            u_pred_mean = u_pred.mean(axis=0)
+            v_pred_mean = v_pred.mean(axis=0)
+            
+            kinetic_energy_gt_mean = kinetic_energy_gt.mean(axis=0)
+            kinetic_energy_pred_mean = kinetic_energy_pred.mean(axis=0)
+
+            wind_vorticity_gt_mean  = wind_vorticity_gt.mean(axis=0)
+            wind_vorticity_pred_mean= wind_vorticity_pred.mean(axis=0)
+
+            wind_divergence_gt_mean = wind_divergence_gt.mean(axis=0)
+            wind_divergence_pred_mean = wind_divergence_pred.mean(axis=0)
+
+            # var_residuals = [
+                # ("Kinetic-energy", np.abs(kinetic_energy_pred_mean - kinetic_energy_gt_mean)),
+                # ("Vorticity",  np.abs(wind_vorticity_pred_mean - wind_vorticity_gt_mean)),
+                # ("Divergence", np.abs(wind_divergence_pred_mean - wind_divergence_gt_mean)),
+            # ]
+            
+            model_var_residuals[model_name] = np.abs(wind_divergence_pred_mean - wind_divergence_gt_mean)
+
+
+        output_dir_model = Path(output_dir)
+        output_dir_model.mkdir(parents=True, exist_ok=True)
+        plot_residual_grid("Divergence", model_var_residuals, out_dir=output_dir_model)
+        print(f"✓ wrote one PNG per variable in {output_dir_model}")
+        
+        
 
     if args.physics_metrics:
     #     div_gt = mass_conservartion(args.path_pressure, args.path_gt, gt=True)
@@ -389,72 +505,3 @@ if __name__ == "__main__":
         )
 
         pprint(metrics)
-        
-    if args.plot_residual:   
-        output_dir = Path(args.save_dir or ".") / "triplet_plots"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        model_name = args.path_pred.split("/")[-2]
-        
-        path_gt, path_pred, path_press = Path(args.path_gt), Path(args.path_pred), Path(args.path_pressure)
-
-        gt_files   = {f.name: f for f in path_gt.glob("*.npy")}
-        pred_files = {f.name: f for f in path_pred.glob("*.npy")}
-        press_files = {f.name: f for f in path_press.glob("*.npy")}
-        common     = sorted(gt_files.keys() & pred_files.keys() & press_files.keys())
-        
-        u_gt   = np.array([np.load(gt_files[f])[:, :, 0] for f in common])   # (N, H, W) --> (t, y, x)
-        v_gt   = np.array([np.load(gt_files[f])[:, :, 1] for f in common])
-        T_gt   = np.array([np.load(gt_files[f])[:, :, 2] for f in common])
-
-        u_pred = np.array([np.load(pred_files[f])[0, :, :] for f in common]) # (N, H, W)
-        v_pred = np.array([np.load(pred_files[f])[1, :, :] for f in common])
-        T_pred = np.array([np.load(pred_files[f])[2, :, :] for f in common])
-        
-        p_s = np.array([np.load(press_files[f]) for f in common])
-        
-        mass_conservartion_gt = mass_conservartion(p_s, u_gt, v_gt, T_gt)
-        mass_conservartion_pred = mass_conservartion(p_s, u_pred, v_pred, T_pred)
-        
-        # wind_speed_gt = np.hypot(u_gt, v_gt)
-        # wind_speed_pred = np.hypot(u_pred, v_pred)
-        
-        wind_vorticity_gt = np.gradient(v_gt, 5500.0, axis=2) - np.gradient(u_gt, 5500.0, axis=1)
-        wind_vorticity_pred = np.gradient(v_pred, 5500.0, axis=2) - np.gradient(u_pred, 5500.0, axis=1)
-        
-        wind_divergence_gt = np.gradient(v_gt, 5500.0, axis=1) + np.gradient(u_gt, 5500.0, axis=2)
-        wind_divergence_pred = np.gradient(v_pred, 5500.0, axis=1) + np.gradient(u_pred, 5500.0, axis=2)
-        
-        u_gt_mean   = u_gt.mean(axis=0)
-        v_gt_mean   = v_gt.mean(axis=0)
-        u_pred_mean = u_pred.mean(axis=0)
-        v_pred_mean = v_pred.mean(axis=0)
-
-        # wind_speed_gt_mean      = wind_speed_gt.mean(axis=0)
-        # wind_speed_pred_mean    = wind_speed_pred.mean(axis=0)
-        
-        mass_conservartion_gt_mean = mass_conservartion_gt.mean(axis=0)
-        mass_conservartion_pred_mean = mass_conservartion_pred.mean(axis=0)
-
-        wind_vorticity_gt_mean  = wind_vorticity_gt.mean(axis=0)
-        wind_vorticity_pred_mean= wind_vorticity_pred.mean(axis=0)
-
-        wind_divergence_gt_mean = wind_divergence_gt.mean(axis=0)
-        wind_divergence_pred_mean = wind_divergence_pred.mean(axis=0)
-
-        triplets = [
-            # ("u",          u_gt_mean,           u_pred_mean),
-            # ("v",          v_gt_mean,           v_pred_mean),
-            # ("speed",      wind_speed_gt_mean,  wind_speed_pred_mean),
-            ("cons_mass", mass_conservartion_gt_mean, mass_conservartion_pred_mean),
-            ("vorticity",  wind_vorticity_gt_mean, wind_vorticity_pred_mean),
-            ("divergence", wind_divergence_gt_mean, wind_divergence_pred_mean),
-        ]
-
-        for name, gt2d, pred2d in triplets:
-            output_dir_model = Path(output_dir) / model_name
-            output_dir_model.mkdir(parents=True, exist_ok=True)
-            prefixed_name = f"{name}"              # ⇐ add prefix
-            plot_triplet(prefixed_name, gt2d, pred2d,
-                        residual_kind="diff",
-                        out_dir=output_dir_model)
-        print(f"✓ wrote one PNG per variable in {output_dir_model}")
