@@ -44,22 +44,22 @@ VARS = ['u10', 'v10', 't2m', 'vorticity', 'divergence', 'k-energy'] #, 'sshf', '
 CHANNEL_MAP = {var: i for i, var in enumerate(VARS)}  # adjust if order differs
 
 CERRA_PATH = pathlib.Path(
-    "/projects/0/prjs1154/CentralEurope_2014_2020/CERRA/samples/test"
+    "/projects/0/prjs1154/Scandinavia/CERRA/samples/test"
 )
 
 ERA5_PATH = pathlib.Path(
-    "/projects/0/prjs1154/CentralEurope_2014_2020/ERA5/samples/test"
+    "/projects/0/prjs1154/Scandinavia/ERA5/samples/test"
 )
 
 MODEL_PATHS: Dict[str, pathlib.Path] = {
-    "Full-CorrDiff"     : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/CorrDiffusion-0-Diffusion-06_24_17-8376/files"),
-    # "Full-CorrDiff-PSD"     : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/CorrDiffusion-001-Diffusion-06_24_17-3916/files"),
-    "Regression-CorrDiff"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/UNet-CNN-0-UNet-CNN-06_17_15-9228/files"),
-    # "Regression-CorrDiff-Delf"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/UNet-CNN-Delft-UNet-CNN-07_10_00-3910/files"),
-    "Regression-CorrDiff-PSD"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/UNet-CNN-Delft-weighted-UNet-CNN-07_10_00-9378/files"),
-    # "Regression-CorrDiff-continue"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/UNet-CNN-flexContinue-UNet-CNN-07_02_11-0248/files"),
-    "CRPS-UNets"            : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/CRPSresume2-UNet-CNN-08_01_14-3691/files"),
-    "CRPS-UNets-PSD"            : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/CRPSwLoss-resum-UNet-CNN-08_04_20-5589/files"),
+    "Full-CorrDiff"     : pathlib.Path("/projects/0/prjs1154/Scandinavia/preds_20142020_1dFFT/CorrDiffusion-0-Diffusion-06_24_17-8376/files"),
+    # "Full-CorrDiff-PSD"     : pathlib.Path("/projects/0/prjs1154/Scandinavia/preds_20142020_1dFFT/CorrDiffusion-001-Diffusion-06_24_17-3916/files"),
+    "Regression-CorrDiff"  : pathlib.Path("/projects/0/prjs1154/Scandinavia/preds_20142020_1dFFT/UNet-CNN-0-UNet-CNN-06_17_15-9228/files"),
+    # "Regression-CorrDiff-Delf"  : pathlib.Path("/projects/0/prjs1154/Scandinavia/preds_20142020_1dFFT/UNet-CNN-Delft-UNet-CNN-07_10_00-3910/files"),
+    "Regression-CorrDiff-PSD"  : pathlib.Path("/projects/0/prjs1154/Scandinavia/preds_20142020_2dFFT/UNet-CNN-Delft-weighted-UNet-CNN-07_10_00-9378/files"),
+    # "Regression-CorrDiff-continue"  : pathlib.Path("/projects/0/prjs1154/Scandinavia/preds_20142020_1dFFT/UNet-CNN-flexContinue-UNet-CNN-07_02_11-0248/files"),
+    "CRPS-UNets"            : pathlib.Path("/projects/0/prjs1154/Scandinavia/preds_20142020_2dFFT/CRPSresume-UNet-CNN-07_14_10-5016/files"),
+    "CRPS-UNets-PSD"            : pathlib.Path("/projects/0/prjs1154/Scandinavia/preds_20142020_2dFFT/CRPSwLoss-resum-UNet-CNN-08_04_20-5589/files"),
     # "CRPS-UNets"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/CRPSresume-UNet-CNN-07_14_10-5016/files"),
     #saved_models/UNet-CNN-Delft-UNet-CNN-07_10_00-3910
 }
@@ -176,7 +176,7 @@ def main() -> None:
         for name, k_m in k_models.items():
             psd_m = psd_models[name]
             # Determine line style based on "PSD" in model name
-            linestyle = '-' if 'PSD' in name else '--'
+            linestyle = '--' if 'PSD' in name else '-'
             color = COLOR_MAP.get(name, None)  # fallback to default if not defined
             plt.loglog(k_m, psd_m, label=name, linestyle=linestyle, linewidth=2, color=color)
 
