@@ -30,12 +30,12 @@ import matplotlib.pyplot as plt
 # ──────────────────────────────────────────
 
 COLOR_MAP = {
-    "Full-CorrDiff": "#e41a1c",         # red
-    "Full-CorrDiff-PSD": "#ff7f00",     # orange
-    "Regression-CorrDiff": "#4daf4a",   # green
-    "Regression-CorrDiff-PSD": "#a6d854",  # light green
-    "CRPS-UNets": "#377eb8",            # blue
-    "CRPS-UNets-PSD": "#9ecae1",        # light blue
+    "Full-CorrDiff":       "#0072B2",  # blue
+    "Full-CorrDiff-PSD":   "#56B4E9",  # light blue
+    "Regression-CorrDiff": "#009E73",  # green
+    "Regression-CorrDiff-PSD": "#67C799",  # light green
+    "CRPS-UNets":          "#D55E00",  # vermillion
+    "CRPS-UNets-PSD":      "#E69F00",  # orange
 }
 
 
@@ -44,22 +44,22 @@ VARS = ['u10', 'v10', 't2m', 'vorticity', 'divergence', 'k-energy'] #, 'sshf', '
 CHANNEL_MAP = {var: i for i, var in enumerate(VARS)}  # adjust if order differs
 
 CERRA_PATH = pathlib.Path(
-    "/projects/0/prjs1154/CentralEurope_2014_2020/CERRA/samples/test"
+    "/projects/0/prjs1154/Scandinavia/CERRA/samples/test"
 )
 
 ERA5_PATH = pathlib.Path(
-    "/projects/0/prjs1154/CentralEurope_2014_2020/ERA5/samples/test"
+    "/projects/0/prjs1154/Scandinavia/ERA5/samples/test"
 )
 
 MODEL_PATHS: Dict[str, pathlib.Path] = {
-    "Full-CorrDiff"     : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/CorrDiffusion-0-Diffusion-06_24_17-8376/files"),
-    # "Full-CorrDiff-PSD"     : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/CorrDiffusion-001-Diffusion-06_24_17-3916/files"),
-    "Regression-CorrDiff"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/UNet-CNN-0-UNet-CNN-06_17_15-9228/files"),
-    # "Regression-CorrDiff-Delf"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/UNet-CNN-Delft-UNet-CNN-07_10_00-3910/files"),
-    "Regression-CorrDiff-PSD"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/UNet-CNN-Delft-weighted-UNet-CNN-07_10_00-9378/files"),
-    # "Regression-CorrDiff-continue"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_1dFFT/UNet-CNN-flexContinue-UNet-CNN-07_02_11-0248/files"),
-    "CRPS-UNets"            : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/CRPSresume-UNet-CNN-07_14_10-5016/files"),
-    "CRPS-UNets-PSD"            : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/CRPSwLoss-resum-UNet-CNN-08_04_20-5589/files"),
+    "Full-CorrDiff"     : pathlib.Path("/projects/0/prjs1154/Scandinavia/preds_20142020_1dFFT/CorrDiffusion-0-Diffusion-06_24_17-8376/files"),
+    # "Full-CorrDiff-PSD"     : pathlib.Path("/projects/0/prjs1154/Scandinavia/preds_20142020_1dFFT/CorrDiffusion-001-Diffusion-06_24_17-3916/files"),
+    "Regression-CorrDiff"  : pathlib.Path("/projects/0/prjs1154/Scandinavia/preds_20142020_1dFFT/UNet-CNN-0-UNet-CNN-06_17_15-9228/files"),
+    # "Regression-CorrDiff-Delf"  : pathlib.Path("/projects/0/prjs1154/Scandinavia/preds_20142020_1dFFT/UNet-CNN-Delft-UNet-CNN-07_10_00-3910/files"),
+    "Regression-CorrDiff-PSD"  : pathlib.Path("/projects/0/prjs1154/Scandinavia/preds_20142020_2dFFT/UNet-CNN-Delft-weighted-UNet-CNN-07_10_00-9378/files"),
+    # "Regression-CorrDiff-continue"  : pathlib.Path("/projects/0/prjs1154/Scandinavia/preds_20142020_1dFFT/UNet-CNN-flexContinue-UNet-CNN-07_02_11-0248/files"),
+    "CRPS-UNets"            : pathlib.Path("/projects/0/prjs1154/Scandinavia/preds_20142020_2dFFT/CRPSresume-UNet-CNN-07_14_10-5016/files"),
+    "CRPS-UNets-PSD"            : pathlib.Path("/projects/0/prjs1154/Scandinavia/preds_20142020_2dFFT/CRPSwLoss-resum-UNet-CNN-08_04_20-5589/files"),
     # "CRPS-UNets"  : pathlib.Path("/projects/0/prjs1154/CentralEurope_2014_2020/preds_20142020_2dFFT/CRPSresume-UNet-CNN-07_14_10-5016/files"),
     #saved_models/UNet-CNN-Delft-UNet-CNN-07_10_00-3910
 }
@@ -204,13 +204,23 @@ def main() -> None:
     # save legend as its *own* skinny figure
     # ──────────────────────────────────────────
     if legend_handles is not None:
-        fig_leg = plt.figure(figsize=(25, 15))      # wide & short
-        fig_leg.legend(legend_handles, legend_labels,
-                       loc='center', ncol=len(legend_labels),
-                       frameon=False, fontsize=40, handlelength=2.0)
-        fig_leg.tight_layout(pad=0.2)
+        num_items = len(legend_labels)
+        cols = int(np.ceil(num_items / 2))
+        fig_leg = plt.figure(figsize=(12, 4.5))      # wide & short
+        fig_leg.legend(
+                    legend_handles, legend_labels,
+                    loc='center',
+                    ncol=cols,                # <- wraps into 2 rows
+                    frameon=False,
+                    fontsize=18,
+                    handlelength=2.0,
+                    columnspacing=1.2,
+                    labelspacing=1.0,
+                )
+        fig_leg.set_constrained_layout(True)
+        # fig_leg.tight_layout(pad=0.2)
         leg_path = OUT_DIR / "model_legend.png"
-        fig_leg.savefig(leg_path, dpi=200, bbox_inches='tight',
+        fig_leg.savefig(leg_path, dpi=300, bbox_inches='tight',
                         transparent=False)            # transparent background
         plt.close(fig_leg)
         print(f"\nLegend strip saved as {leg_path.name}")
