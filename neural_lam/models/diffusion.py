@@ -8,7 +8,7 @@ import nvtx
 import torch
 from neural_lam.models.unet import UNetWrapper
 import pytorch_lightning as pl
-from neural_lam.utils import stochastic_sampler, diffusion_step
+from neural_lam.utils import stochastic_sampler, diffusion_step, crps_ensemble
 from functools import partial
 
 from neural_lam import constants
@@ -307,7 +307,7 @@ class DiffusionWrapper(pl.LightningModule):
         ) * self.trainer.world_size
         rank_batches = seeds.tensor_split(num_batches)[self.global_rank::self.trainer.world_size]
         
-        y_res = diffusion_step(
+        y_res, y_res_ens = diffusion_step(
                             net=self,
                             sampler_fn=sampler_fn,
                             img_shape=tuple(self.img_resolution),
@@ -333,6 +333,9 @@ class DiffusionWrapper(pl.LightningModule):
         # Assuming `ground_truth` was normalized the same way as `prediction`:
         predictions  = predictions * high_res_std + high_res_mean
         ground_truth = ground_truth * high_res_std + high_res_mean
+        
+        y_pred_ens = y_res_ens + y_mean.unsqueeze(1)
+        y_pred_ens = y_pred_ens * high_res_std + high_res_mean 
 
         # (3) If requested, save each sample’s un‐normalized prediction as a .npy file.
         #     We'll save into a folder called "predictions" (create if needed),
@@ -395,6 +398,19 @@ class DiffusionWrapper(pl.LightningModule):
         log_metrics.update(mae_vars)
         log_metrics.update(rmse_vars)
         log_metrics.update(ssim_vars)
+        
+        # --- new CRPS metrics (insert here) ---
+        crps_map = crps_ensemble(y_pred_ens, ground_truth)
+        crps_overall = crps_map.mean()
+        crps_per_var = crps_map.mean(dim=(0, 2, 3))
+        log_metrics["test_crps"] = crps_overall
+        # print("#################################################")
+        # print("y_pred_ens", y_pred_ens.shape)
+        # print("crps_overall", crps_overall.item())
+        # print("crps_per_var", crps_per_var)
+        # print("#################################################")
+        for i, var_name in enumerate(var_names):
+            log_metrics[f"test_crps_{var_name}"] = crps_per_var[i]
         
         self.log_dict(log_metrics, prog_bar=False, on_epoch=True, sync_dist=True)
         
