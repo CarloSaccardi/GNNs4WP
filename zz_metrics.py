@@ -277,24 +277,6 @@ def mass_conservartion(p_s, u, v, T):
     # print(f"Mean |∇·(ρu,ρv)|  : {MAE: .3e}  kg m⁻³ s⁻¹")
     return div
 
-# ------------------------------------------------------------------
-#  Tiny helpers – unchanged
-# ------------------------------------------------------------------
-def imshow_with_cbar(ax, data, title, *,
-                     cmap='plasma', origin='lower',
-                     vmin=None, vmax=None, norm=None,
-                     cbar_kw=None,
-                     add_cbar=False):              # ← NEW flag
-    im = ax.imshow(data, cmap=cmap, origin=origin,
-                   vmin=vmin, vmax=vmax, norm=norm)
-    ax.set_title(title, fontsize=18)
-
-    if add_cbar:                                # ← only when asked
-        divider = make_axes_locatable(ax)
-        cax = divider.append_axes('right', size='3%', pad=0.1)
-        plt.colorbar(im, cax=cax, **(cbar_kw or {}))
-    return im
-
 def shared_limits(gt, pred):
     #clip the values to the 0.1 and 99.9 percentiles
     gt = np.clip(gt, np.percentile(gt, 0.1), np.percentile(gt, 99.9))
@@ -349,10 +331,26 @@ def plot_triplet(var_name: str,
 
     fig.savefig(out_dir / f"{var_name}_triplet.png", dpi=300)
     plt.close(fig)
-    
-    
-    
 
+# ------------------------------------------------------------------
+#  Tiny helpers – unchanged
+# ------------------------------------------------------------------
+def imshow_with_cbar(ax, data, title, *,
+                     cmap='plasma', origin='lower',
+                     vmin=None, vmax=None, norm=None,
+                     cbar_kw=None,
+                     add_cbar=False):              # ← NEW flag
+    im = ax.imshow(data, cmap=cmap, origin=origin,
+                   vmin=vmin, vmax=vmax, norm=norm)
+    ax.set_title(title, fontsize=20)
+
+    if add_cbar:                                # ← only when asked
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes('right', size='3%', pad=0.1)
+        plt.colorbar(im, cax=cax, **(cbar_kw or {}))
+    return im
+        
+    
 def plot_residual_grid(
         var_name: str,
         resid: dict[str, np.ndarray],          # {model_name -> residual array}
@@ -368,27 +366,36 @@ def plot_residual_grid(
     rmin, rmax = np.percentile(rflat, (1, 99))      # 1st … 99th percentile
 
     # ---------- figure ----------
-    fig, axes = plt.subplots(2, 3, figsize=(24, 12), constrained_layout=True)
+    fig, axes = plt.subplots(2, 3, figsize=(24, 12))
 
     ims = []
-    for ax, (model_name, data) in zip(axes.flat, resid.items()):
+    display_names = [
+        "Full CorrDiff - Central Europe",
+        "Regression CorrDiff - Central Europe",
+        "CRPS UNets - Central Europe",
+        "Full CorrDiff - Iberia",
+        "Regression CorrDiff - Iberia",
+        "CRPS UNets - Iberia",
+    ]
+    for ax, model_name, data in zip(axes.flat, display_names, resid.values()):
         
         ax.set_axis_off()
         
         im = imshow_with_cbar(
             ax, data,
-            f"Residual {model_name}",
+            f"{model_name}",
             cmap="plasma", vmin=rmin, vmax=rmax,
             add_cbar=False           # ← no per-axis bars
         )
-        ims.append(im)
+        ims.append(im)    
 
     # one shared colour-bar for *all* six residuals
-    fig.colorbar(
+    cbar = fig.colorbar(
         ims[0], ax=axes,
         orientation="horizontal",
         fraction=0.05, pad=0.08
     )
+    cbar.ax.tick_params(labelsize=20)
 
     out_path = out_dir / f"{var_name}_residual_grid.png"
     fig.savefig(out_path, dpi=300)
@@ -411,6 +418,7 @@ if __name__ == "__main__":
     #################################################################################################################################
     parser.add_argument("--path_gt_iberia", help="Directory with ground‑truth iberia .npy files")
     parser.add_argument("--path_gt_CE", help="Directory with ground‑truth CE .npy files")
+    parser.add_argument("--path_gt_scandinavia", help="Directory with ground‑truth scandinavia .npy files")
     parser.add_argument("--path_preds", nargs="+", type=Path, help="One or more directories with prediction .npy files")
     parser.add_argument("--plot_residuals", type=bool, help="Plot residuals", default=False)
     parser.add_argument(
@@ -433,10 +441,16 @@ if __name__ == "__main__":
         for path_pred in args.path_preds:            # loop over models
             path_pred  = Path(path_pred)
             model = path_pred.parent.name            # unchanged
-            region = path_pred.parts[3]
-            model_name = f"{model}-{region}"  
+            region = path_pred.parts[4]
+            model_name = f"{model}_{region}"  
+            print(model_name)
                       
-            path_gt   = Path(args.path_gt_iberia) if "beria" in model_name else Path(args.path_gt_CE)     
+            if "beria" in model_name:
+                path_gt = Path(args.path_gt_iberia)
+            elif "candinavia" in model_name:  # or whatever substring makes sense
+                path_gt = Path(args.path_gt_scandinavia)
+            else:
+                path_gt = Path(args.path_gt_CE)  # default to Central Europe
             gt_files  = sorted(path_gt.glob("*.npy"))         #
             gt_stack  = np.stack([np.load(f) for f in gt_files], axis=0)
             u_gt, v_gt, T_gt = gt_stack[..., 0], gt_stack[..., 1], gt_stack[..., 2]
@@ -451,42 +465,46 @@ if __name__ == "__main__":
 
             u_pred, v_pred, T_pred = pred_stack[:, 0], pred_stack[:, 1], pred_stack[:, 2]
         
-            kinetic_energy_gt = 0.5 * (u_gt**2 + v_gt**2) 
-            kinetic_energy_pred = 0.5 * (u_pred**2 + v_pred**2)
+            # kinetic_energy_gt = 0.5 * (u_gt**2 + v_gt**2) 
+            # kinetic_energy_pred = 0.5 * (u_pred**2 + v_pred**2)
             
             wind_vorticity_gt = np.gradient(v_gt, 5500.0, axis=2) - np.gradient(u_gt, 5500.0, axis=1)
             wind_vorticity_pred = np.gradient(v_pred, 5500.0, axis=2) - np.gradient(u_pred, 5500.0, axis=1)
             
-            wind_divergence_gt = np.gradient(v_gt, 5500.0, axis=1) + np.gradient(u_gt, 5500.0, axis=2)
-            wind_divergence_pred = np.gradient(v_pred, 5500.0, axis=1) + np.gradient(u_pred, 5500.0, axis=2)
+            # wind_divergence_gt = np.gradient(v_gt, 5500.0, axis=1) + np.gradient(u_gt, 5500.0, axis=2)
+            # wind_divergence_pred = np.gradient(v_pred, 5500.0, axis=1) + np.gradient(u_pred, 5500.0, axis=2)
             
             u_gt_mean   = u_gt.mean(axis=0)
             v_gt_mean   = v_gt.mean(axis=0)
             u_pred_mean = u_pred.mean(axis=0)
             v_pred_mean = v_pred.mean(axis=0)
             
-            kinetic_energy_gt_mean = kinetic_energy_gt.mean(axis=0)
-            kinetic_energy_pred_mean = kinetic_energy_pred.mean(axis=0)
+            # kinetic_energy_gt_mean = kinetic_energy_gt.mean(axis=0)
+            # kinetic_energy_pred_mean = kinetic_energy_pred.mean(axis=0)
 
             wind_vorticity_gt_mean  = wind_vorticity_gt.mean(axis=0)
             wind_vorticity_pred_mean= wind_vorticity_pred.mean(axis=0)
 
-            wind_divergence_gt_mean = wind_divergence_gt.mean(axis=0)
-            wind_divergence_pred_mean = wind_divergence_pred.mean(axis=0)
+            # wind_divergence_gt_mean = wind_divergence_gt.mean(axis=0)
+            # wind_divergence_pred_mean = wind_divergence_pred.mean(axis=0)
 
             # var_residuals = [
                 # ("Kinetic-energy", np.abs(kinetic_energy_pred_mean - kinetic_energy_gt_mean)),
                 # ("Vorticity",  np.abs(wind_vorticity_pred_mean - wind_vorticity_gt_mean)),
                 # ("Divergence", np.abs(wind_divergence_pred_mean - wind_divergence_gt_mean)),
             # ]
-            
-            model_var_residuals[model_name] = np.abs(wind_divergence_pred_mean - wind_divergence_gt_mean)
+            residauls = np.abs(wind_vorticity_pred_mean - wind_vorticity_gt_mean)
+            model_var_residuals[model_name] = residauls
+            #save the residuals to a file
+            np.save(f"{model_name}.npy", residauls)
+            #print model name and sum of residuals
+            print(f"{model_name} sum of residuals: {np.sum(residauls)}")
 
 
-        output_dir_model = Path(output_dir)
-        output_dir_model.mkdir(parents=True, exist_ok=True)
-        plot_residual_grid("Divergence", model_var_residuals, out_dir=output_dir_model)
-        print(f"✓ wrote one PNG per variable in {output_dir_model}")
+        # output_dir_model = Path(output_dir)
+        # output_dir_model.mkdir(parents=True, exist_ok=True)
+        # plot_residual_grid("Divergence", model_var_residuals, out_dir=output_dir_model)
+        # print(f"✓ wrote one PNG per variable in {output_dir_model}")
         
         
 
