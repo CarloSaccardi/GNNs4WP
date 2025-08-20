@@ -531,6 +531,29 @@ def ensure_channels_last(arr: np.ndarray, C_expected: int) -> np.ndarray:
         return np.moveaxis(arr, 0, -1)   # → (H,W,C)
     raise ValueError(f"Cannot locate channel axis in shape {arr.shape}")
 
+def crps_ensemble(y_ens: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
+    """
+    y_ens:  (N, E, C, H, W)
+    y_true: (N,    C, H, W)
+    Returns CRPS map with shape (N, C, H, W)
+      CRPS(F,y) = E|X - y| - 0.5 * E|X - X'|
+    """
+    N, E, C, H, W = y_ens.shape
+
+    # term1: mean |X - y|
+    term1 = torch.mean(torch.abs(y_ens - y_true.unsqueeze(1)), dim=1)   # (N, C, H, W)
+
+    # term2: 0.5 * mean |X - X'|  (efficient via sorted identity)
+    X_sorted, _ = torch.sort(y_ens, dim=1)                              # (N, E, C, H, W)
+    # coeff_k = 2k - E - 1, for k = 1..E  (broadcast to match dims)
+    idx = torch.arange(1, E + 1, device=y_ens.device, dtype=y_ens.dtype).view(1, E, 1, 1, 1)
+    coeff = 2 * idx - (E + 1)
+    S = (coeff * X_sorted).sum(dim=1)                                   # (N, C, H, W)
+    mean_pair = (2.0 / (E * E)) * S                                     # (N, C, H, W)
+    term2 = 0.5 * mean_pair
+
+    return term1 - term2 
+
 
 
 if __name__ == "__main__":

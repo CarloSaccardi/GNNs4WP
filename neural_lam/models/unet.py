@@ -13,6 +13,8 @@ import numpy as np
 from scipy.fft import fft
 import math
 
+from neural_lam.utils import crps_ensemble
+
 from neural_lam.models.fourerLosses import FourierLossETH, CRPSloss, FourierLossHK, FourierLossCarlo
 
 network_module = importlib.import_module("physicsnemo.models.diffusion")
@@ -70,7 +72,7 @@ class UNetWrapper(pl.LightningModule):
         self,
         x: torch.Tensor,
         img_lr: torch.Tensor,
-        ensemble_size: int = 32,
+        ensemble_size: int = 16,
         force_fp32: bool = False,
         **model_kwargs: dict,
     ) -> torch.Tensor:
@@ -281,6 +283,15 @@ class UNetWrapper(pl.LightningModule):
         log_metrics.update(mae_vars)
         log_metrics.update(rmse_vars)
         log_metrics.update(ssim_vars)
+        
+        ens_unnorm = ensemble * high_res_std.unsqueeze(1) + high_res_mean.unsqueeze(1)  # (N,E,C,H,W)
+        crps_map = crps_ensemble(ens_unnorm, ground_truth)  # both un-normalized
+        crps_overall = crps_map.mean()
+        crps_per_var = crps_map.mean(dim=(0, 2, 3))
+        log_metrics["test_crps"] = crps_overall
+        
+        for i, var_name in enumerate(var_names):
+            log_metrics[f"test_crps_{var_name}"] = crps_per_var[i]
 
         # Write to Lightning’s logger (and optionally sync across GPUs)
         self.log_dict(log_metrics, prog_bar=False, on_epoch=True, sync_dist=True)
@@ -528,7 +539,7 @@ class RegressionLoss:
         y_lr = y_tot[:, img_clean.shape[1] :, :, :]
 
         zero_input = torch.zeros_like(y, device=img_clean.device)
-        ens_pred = net(zero_input, y_lr, ensemble_size=32, force_fp32=False, augment_labels=augment_labels)
+        ens_pred = net(zero_input, y_lr, ensemble_size=16, force_fp32=False, augment_labels=augment_labels)
         
         crps = self.loss_crps(ens_pred, y)
         #mean(dim=1)
